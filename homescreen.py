@@ -12,7 +12,7 @@ import vlc
 import yt_dlp
 
 class HomeScreen(ctk.CTkFrame):
-    def __init__(self, master):
+    def __init__(self, master, switch_to_main_callback=None, initial_search=None):
         super().__init__(master, fg_color="#121212")
         self.pack(fill="both", expand=True, padx=20, pady=20)
         self.thumbnail_refs = []  
@@ -28,7 +28,8 @@ class HomeScreen(ctk.CTkFrame):
         self.search_delay = 0.3  
         self.search_timer = None
         self.player_visible = False  
-        
+        self.switch_to_main_callback = switch_to_main_callback
+        self.initial_search = initial_search
         # Initialize VLC player
         try:
             self.vlc_instance = vlc.Instance('--intf', 'dummy')
@@ -38,15 +39,16 @@ class HomeScreen(ctk.CTkFrame):
             print(f"VLC not available: {e}")
             self.vlc_available = False
             self.player = None
-        
         self.ydl_opts = {
             'format': 'bestaudio[abr>0]/bestaudio/best',
             'quiet': True,
             'no_warnings': True,
         }
-        
         pygame.mixer.init()
         self.build_ui()
+        if self.initial_search:
+            self.search_var.set(self.initial_search)
+            self.perform_search(self.initial_search)
 
     def build_ui(self):
         # Main container
@@ -55,7 +57,7 @@ class HomeScreen(ctk.CTkFrame):
         
         # Search bar container to center it
         search_container = ctk.CTkFrame(main_container, fg_color="transparent")
-        search_container.pack(fill="x", pady=(0, 20))
+        search_container.pack(fill="x", pady=(10, 20))
         
         # Search bar centered
         search_frame = ctk.CTkFrame(search_container, fg_color="transparent")
@@ -387,28 +389,11 @@ class HomeScreen(ctk.CTkFrame):
                 
                 self.is_playing = True
                 self.current_time = 0
-                total_seconds = self._duration_to_seconds(self.np_duration.cget("text"))
                 
                 self.master.after(0, lambda: self.np_play.configure(text="⏸"))
                 
-                while self.is_playing and not self.stop_thread:
-                    try:
-                        state = self.player.get_state()
-                        if str(state) == "State.Ended" or state == 6:
-                            break
-                        
-                        if total_seconds > 0:
-                            position = self.player.get_position()
-                            self.current_time = position * total_seconds
-                            self.master.after(0, self._update_time_display)
-                        
-                        time.sleep(1)
-                    except Exception as e:
-                        print(f"Playback monitoring error: {e}")
-                        break
-                
-                if not self.stop_thread and self.is_playing:
-                    self.master.after(0, self._on_next)
+                # Use the new update loop
+                self._vlc_update_loop()
             else:
                 self._simulated_playback()
                 
@@ -418,18 +403,11 @@ class HomeScreen(ctk.CTkFrame):
     def _simulated_playback(self):
         self.is_playing = True
         self.current_time = 0
-        total_seconds = self._duration_to_seconds(self.np_duration.cget("text"))
         
         self.master.after(0, lambda: self.np_play.configure(text="⏸"))
         
-        while self.is_playing and self.current_time < total_seconds and not self.stop_thread:
-            time.sleep(1)
-            if self.is_playing:
-                self.current_time += 1
-                self.master.after(0, self._update_time_display)
-        
-        if self.current_time >= total_seconds and not self.stop_thread and self.is_playing:
-            self.master.after(0, self._on_next)
+        # Use the new update loop
+        self._simulated_update_loop()
 
     def _update_time_display(self):
         if not hasattr(self, 'np_slider'):
@@ -455,20 +433,36 @@ class HomeScreen(ctk.CTkFrame):
         if self.current_index is None:
             return
             
-        self.is_playing = not self.is_playing
         if self.is_playing:
-            self.np_play.configure(text="⏸")
-            if self.vlc_available and self.player:
-                self.player.play()
-            else:
-                pygame.mixer.music.unpause()
-        else:
+            # Pausing
+            self.is_playing = False
+            self.stop_thread = True
             self.np_play.configure(text="▶")
+            
             if self.vlc_available and self.player:
                 self.player.pause()
             else:
                 pygame.mixer.music.pause()
-        self.stop_thread = not self.is_playing
+                
+            # Wait for the update thread to finish
+            if self.update_thread and self.update_thread.is_alive():
+                self.update_thread.join()
+        else:
+            # Resuming
+            self.is_playing = True
+            self.stop_thread = False
+            self.np_play.configure(text="⏸")
+            
+            if self.vlc_available and self.player:
+                self.player.play()
+                # Restart the update thread for VLC
+                self.update_thread = threading.Thread(target=self._vlc_update_loop)
+                self.update_thread.start()
+            else:
+                pygame.mixer.music.unpause()
+                # Restart the update thread for simulated playback
+                self.update_thread = threading.Thread(target=self._simulated_update_loop)
+                self.update_thread.start()
 
     def _on_prev(self):
         if self.current_index is not None and self.current_index > 0:
@@ -505,16 +499,15 @@ class HomeScreen(ctk.CTkFrame):
 
     def _on_search_input(self, event=None):
         query = self.search_var.get().strip()
-        
-        if self.search_timer:
-            self.master.after_cancel(self.search_timer)
-        
+        if hasattr(self, 'search_timer') and self.search_timer:
+            self.after_cancel(self.search_timer)
         if not query:
             for widget in self.scrollable_frame.winfo_children():
                 widget.destroy()
+            if self.switch_to_main_callback:
+                self.switch_to_main_callback()
             return
-        
-        self.search_timer = self.master.after(300, lambda: self.perform_search(query))
+        self.search_timer = self.after(800, lambda: self.perform_search(query))
 
     def perform_search(self, query=None):
         if query is None:
@@ -581,7 +574,7 @@ class HomeScreen(ctk.CTkFrame):
             card_container.pack(fill="x", pady=4)
             
             # Actual card with fixed max width and centered
-            card = ctk.CTkFrame(card_container, fg_color="#181818", corner_radius=8, width=800, height=90)
+            card = ctk.CTkFrame(card_container, fg_color="#181818", corner_radius=8, width= 1800, height=90) # 
             card.pack(anchor="center", pady=0, padx=20)  # Center the card
             card.pack_propagate(False)  # Maintain fixed size
 
@@ -664,6 +657,41 @@ class HomeScreen(ctk.CTkFrame):
 
         self.scrollable_frame.update_idletasks()
         self.results_canvas.configure(scrollregion=self.results_canvas.bbox("all"))
+
+    def _vlc_update_loop(self):
+        """Separate update loop for VLC playback"""
+        total_seconds = self._duration_to_seconds(self.np_duration.cget("text"))
+        
+        while self.is_playing and not self.stop_thread:
+            try:
+                if self.vlc_available and self.player:
+                    state = self.player.get_state()
+                    if str(state) == "State.Ended" or state == 6:
+                        self.master.after(0, self._on_next)
+                        break
+                    
+                    if total_seconds > 0:
+                        position = self.player.get_position()
+                        self.current_time = position * total_seconds
+                        self.master.after(0, self._update_time_display)
+                
+                time.sleep(1)
+            except Exception as e:
+                print(f"VLC update error: {e}")
+                break
+
+    def _simulated_update_loop(self):
+        """Separate update loop for simulated playback"""
+        total_seconds = self._duration_to_seconds(self.np_duration.cget("text"))
+        
+        while self.is_playing and self.current_time < total_seconds and not self.stop_thread:
+            time.sleep(1)
+            if self.is_playing:
+                self.current_time += 1
+                self.master.after(0, self._update_time_display)
+        
+        if self.current_time >= total_seconds and not self.stop_thread and self.is_playing:
+            self.master.after(0, self._on_next)
 
     def _load_thumbnail_async(self, thumbnail_frame, thumb_url, idx):
         try:
