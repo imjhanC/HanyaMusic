@@ -1,0 +1,36 @@
+# Different quality options you can use:
+
+# Option 1: Highest bitrate audio only
+ydl_opts_highest_bitrate = {
+    'format': 'bestaudio[abr>0]/bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+}
+
+# Option 2: Specific codec preference (AAC > Opus > MP3)
+ydl_opts_codec_preference = {
+    'format': 'bestaudio[acodec=aac]/bestaudio[acodec=opus]/bestaudio[acodec=mp3]/bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+}
+
+# Option 3: Minimum bitrate requirement (e.g., at least 128kbps)
+ydl_opts_min_bitrate = {
+    'format': 'bestaudio[abr>=128]/bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+}
+
+# Option 4: Maximum quality with size limit (e.g., under 50MB)
+ydl_opts_size_limit = {
+    'format': 'bestaudio[filesize<50M]/bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+}
+
+# Option 5: Original/source quality (if available)
+ydl_opts_original = {
+    'format': 'bestaudio[format_id*=original]/bestaudio[ext=m4a]/bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+}
