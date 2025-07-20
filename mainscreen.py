@@ -11,7 +11,7 @@ class MainScreen(ctk.CTkFrame):
         self.build_ui()
 
     def build_ui(self):
-        # Search bar (styled like HomeScreen) - always on top
+        # Search bar
         self.search_var = ctk.StringVar()
         search_entry = ctk.CTkEntry(
             self,
@@ -22,25 +22,43 @@ class MainScreen(ctk.CTkFrame):
         search_entry.pack(pady=(10, 30), anchor="n")
         search_entry.bind("<KeyRelease>", self.on_search_input)
 
-        # Greeting based on time
+        # Greeting card container
+        self.greeting_card = ctk.CTkFrame(self, fg_color="#1E1E1E", corner_radius=12)
+        self.greeting_card.pack(pady=(0, 20), padx=20, anchor="n")
+
+        # Determine greeting text based on time
         now = datetime.datetime.now().hour
         if 5 <= now < 12:
-            greeting = "Good morning, user!"
+            greeting_text = "🌅 Good morning, user!"
         elif 12 <= now < 18:
-            greeting = "Good afternoon, user!"
+            greeting_text = "🌤️ Good afternoon, user!"
         elif 18 <= now < 22:
-            greeting = "Good evening, user!"
+            greeting_text = "🌇 Good evening, user!"
         else:
-            greeting = "Hello, user!"
+            greeting_text = "🌙 Hello, user!"
 
-        greeting_label = ctk.CTkLabel(self, text=greeting, font=("Helvetica", 32, "bold"), text_color="#1DB954")
-        greeting_label.pack(pady=(0, 10), anchor="n")
+        # Greeting label (starting faded)
+        self.greeting_label = ctk.CTkLabel(
+            self.greeting_card,
+            text=greeting_text,
+            font=("Helvetica", 32, "bold"),
+            text_color="#1D5932"  # Start with darker green
+        )
+        self.greeting_label.pack(padx=20, pady=20)
+
+        # Simulate fade-in animation
+        self.animate_greeting()
 
         # Suggestion label
-        suggestion_label = ctk.CTkLabel(self, text="Try these trending playlists:", font=("Helvetica", 20, "bold"), text_color="#FFFFFF")
+        suggestion_label = ctk.CTkLabel(
+            self,
+            text="Try these trending playlists:",
+            font=("Helvetica", 20, "bold"),
+            text_color="#FFFFFF"
+        )
         suggestion_label.pack(pady=(10, 10), anchor="n")
 
-        # Playlist suggestions (from web search)
+        # Playlist suggestions
         playlists = [
             ("Top Hits 2025 - Playlist", "https://www.youtube.com/playlist?list=PLDIoUOhQQPlXr63I_vwF9GD8sAKh77dWU"),
             ("Popular Music Videos 2025", "https://www.youtube.com/playlist?list=PLTmaZB7buLocCCFf2sx8Q72W7seIIrWbP"),
@@ -62,6 +80,20 @@ class MainScreen(ctk.CTkFrame):
                 command=lambda u=url: webbrowser.open(u)
             )
             btn.pack(pady=6, ipadx=10, ipady=4, anchor="n")
+
+    def animate_greeting(self):
+        # Shades of green for fade effect
+        green_shades = [
+            "#1D5932", "#1D6940", "#1D7A4E", "#1D8A5C", "#1D9B6A",
+            "#1DAD78", "#1DBF86", "#1DD194", "#1DE3A2", "#1DF5B0", "#1DB954"
+        ]
+
+        def update_color(index=0):
+            if index < len(green_shades):
+                self.greeting_label.configure(text_color=green_shades[index])
+                self.after(40, lambda: update_color(index + 1))
+
+        update_color()
 
     def on_search_input(self, event=None):
         query = self.search_var.get().strip()
