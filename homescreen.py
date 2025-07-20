@@ -53,9 +53,13 @@ class HomeScreen(ctk.CTkFrame):
         main_container = ctk.CTkFrame(self, fg_color="transparent")
         main_container.pack(fill="both", expand=True)
         
-        # Search bar
-        search_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        search_frame.pack(pady=(0, 10), fill="x")
+        # Search bar container to center it
+        search_container = ctk.CTkFrame(main_container, fg_color="transparent")
+        search_container.pack(fill="x", pady=(0, 20))
+        
+        # Search bar centered
+        search_frame = ctk.CTkFrame(search_container, fg_color="transparent")
+        search_frame.pack(expand=True, anchor="center")
         
         self.search_var = ctk.StringVar()
         search_entry = ctk.CTkEntry(
@@ -561,6 +565,10 @@ class HomeScreen(ctk.CTkFrame):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
 
+        # Create a container to center the cards
+        container = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=10)
+
         for idx, video in enumerate(results):
             title = video['title']
             duration = video.get('duration', 'N/A')
@@ -568,59 +576,91 @@ class HomeScreen(ctk.CTkFrame):
             thumbnails = video.get('thumbnails', [])
             thumb_url = thumbnails[0]['url'] if thumbnails else None
 
-            card = ctk.CTkFrame(self.scrollable_frame, fg_color="#181818")
-            card.pack(fill="x", pady=5, padx=5)
+            # Main card container - centered with max width
+            card_container = ctk.CTkFrame(container, fg_color="transparent")
+            card_container.pack(fill="x", pady=4)
+            
+            # Actual card with fixed max width and centered
+            card = ctk.CTkFrame(card_container, fg_color="#181818", corner_radius=8, width=800, height=90)
+            card.pack(anchor="center", pady=0, padx=20)  # Center the card
+            card.pack_propagate(False)  # Maintain fixed size
 
-            def on_enter(e, c=card):
-                c.configure(fg_color="#232323")
-            def on_leave(e, c=card):
-                c.configure(fg_color="#181818")
-            card.bind("<Enter>", on_enter)
-            card.bind("<Leave>", on_leave)
+            # Inner content frame with proper padding
+            content_frame = ctk.CTkFrame(card, fg_color="transparent")
+            content_frame.pack(fill="both", expand=True, padx=15, pady=10)
 
-            thumbnail_frame = ctk.CTkFrame(card, fg_color="transparent", width=120, height=68)
-            thumbnail_frame.pack(side="left", padx=8, pady=4)
+            # Thumbnail on the left
+            thumbnail_frame = ctk.CTkFrame(content_frame, fg_color="#333333", width=70, height=70, corner_radius=6)
+            thumbnail_frame.pack(side="left", padx=(0, 15))
             thumbnail_frame.pack_propagate(False)
             
             if thumb_url:
-                placeholder = ctk.CTkLabel(thumbnail_frame, text="🔄", width=120, height=68)
+                placeholder = ctk.CTkLabel(thumbnail_frame, text="🔄", width=70, height=70)
                 placeholder.pack(expand=True, fill="both")
                 threading.Thread(target=self._load_thumbnail_async, args=(thumbnail_frame, thumb_url, idx)).start()
             else:
-                placeholder = ctk.CTkLabel(thumbnail_frame, text="🎵", width=120, height=68)
+                placeholder = ctk.CTkLabel(thumbnail_frame, text="🎵", width=70, height=70)
                 placeholder.pack(expand=True, fill="both")
 
-            info_frame = ctk.CTkFrame(card, fg_color="transparent")
-            info_frame.pack(side="left", fill="x", expand=True, padx=5)
+            # Song info in the middle - better alignment
+            info_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+            info_frame.pack(side="left", fill="both", expand=True, padx=(0, 15))
 
+            # Title with better wrapping and centering
             title_label = ctk.CTkLabel(
                 info_frame,
-                text=title,
-                text_color="#1DB954",
-                font=("Helvetica", 14),
-                cursor="hand2"
+                text=title if len(title) <= 60 else title[:57] + "...",
+                text_color="#FFFFFF",
+                font=("Helvetica", 14, "bold"),
+                cursor="hand2",
+                anchor="w",
+                justify="left"
             )
-            title_label.pack(anchor="w")
+            title_label.pack(fill="x", pady=(8, 2))
             title_label.bind("<Button-1>", partial(self._on_result_click, idx))
 
             duration_label = ctk.CTkLabel(
                 info_frame,
                 text=f"Duration: {duration}",
                 text_color="#B3B3B3",
-                font=("Helvetica", 12)
+                font=("Helvetica", 11),
+                anchor="w",
+                justify="left"
             )
-            duration_label.pack(anchor="w")
+            duration_label.pack(fill="x", pady=(0, 8))
 
+            # Play button on the right - better positioning
             play_btn = ctk.CTkButton(
-                card,
+                content_frame,
                 text="▶",
-                width=40,
+                width=50,
+                height=50,
                 fg_color="#1DB954",
                 hover_color="#1ED760",
                 text_color="#FFFFFF",
+                font=("Helvetica", 16),
+                corner_radius=25,
                 command=partial(self._on_result_click, idx)
             )
-            play_btn.pack(side="right", padx=8, pady=8)
+            play_btn.pack(side="right", pady=10)
+
+            # Hover effects
+            def on_enter(e, c=card):
+                c.configure(fg_color="#232323")
+            def on_leave(e, c=card):
+                c.configure(fg_color="#181818")
+            
+            card.bind("<Enter>", on_enter)
+            card.bind("<Leave>", on_leave)
+            
+            # Make the entire card clickable
+            def make_clickable(widget, index=idx):
+                widget.bind("<Button-1>", partial(self._on_result_click, index))
+                for child in widget.winfo_children():
+                    if not isinstance(child, ctk.CTkButton):  # Don't override button clicks
+                        make_clickable(child, index)
+            
+            make_clickable(card)
 
         self.scrollable_frame.update_idletasks()
         self.results_canvas.configure(scrollregion=self.results_canvas.bbox("all"))
