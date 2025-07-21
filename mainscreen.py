@@ -1,20 +1,23 @@
 import customtkinter as ctk
-from homescreen import HomeScreen
 import datetime
 import webbrowser
 
 class MainScreen(ctk.CTkFrame):
     def __init__(self, master, switch_to_home_callback):
         super().__init__(master, fg_color="#121212")
-        self.pack(fill="both", expand=True, padx=20, pady=20)
+        self.pack(fill="both", expand=True)
         self.switch_to_home_callback = switch_to_home_callback
         self.build_ui()
 
     def build_ui(self):
+        # Main container to center content
+        main_container = ctk.CTkFrame(self, fg_color="transparent")
+        main_container.pack(expand=True, pady=(0, 100),anchor="n" )
+
         # Search bar
         self.search_var = ctk.StringVar()
         search_entry = ctk.CTkEntry(
-            self,
+            main_container,
             textvariable=self.search_var,
             width=400,
             placeholder_text="Search for music..."
@@ -23,8 +26,8 @@ class MainScreen(ctk.CTkFrame):
         search_entry.bind("<KeyRelease>", self.on_search_input)
 
         # Greeting card container
-        self.greeting_card = ctk.CTkFrame(self, fg_color="#1E1E1E", corner_radius=12)
-        self.greeting_card.pack(pady=(0, 20), padx=20, anchor="n")
+        self.greeting_card = ctk.CTkFrame(main_container, fg_color="#1E1E1E", corner_radius=12)
+        self.greeting_card.pack(pady=(0, 0), padx=20, anchor="n")
 
         # Determine greeting text based on time
         now = datetime.datetime.now().hour
@@ -51,12 +54,12 @@ class MainScreen(ctk.CTkFrame):
 
         # Suggestion label
         suggestion_label = ctk.CTkLabel(
-            self,
+            main_container,
             text="Try these trending playlists:",
             font=("Helvetica", 20, "bold"),
             text_color="#FFFFFF"
         )
-        suggestion_label.pack(pady=(10, 10), anchor="n")
+        suggestion_label.pack(pady=(10, 50), anchor="n")
 
         # Playlist suggestions
         playlists = [
@@ -70,7 +73,7 @@ class MainScreen(ctk.CTkFrame):
 
         for title, url in playlists:
             btn = ctk.CTkButton(
-                self,
+                main_container,
                 text=title,
                 fg_color="#1DB954",
                 hover_color="#1ED760",
@@ -82,7 +85,6 @@ class MainScreen(ctk.CTkFrame):
             btn.pack(pady=6, ipadx=10, ipady=4, anchor="n")
 
     def animate_greeting(self):
-        # Shades of green for fade effect
         green_shades = [
             "#1D5932", "#1D6940", "#1D7A4E", "#1D8A5C", "#1D9B6A",
             "#1DAD78", "#1DBF86", "#1DD194", "#1DE3A2", "#1DF5B0", "#1DB954"
