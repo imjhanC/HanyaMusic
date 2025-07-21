@@ -29,10 +29,23 @@ class MainScreen(ctk.CTkFrame):
         self.greeting_card = ctk.CTkFrame(main_container, fg_color="#1E1E1E", corner_radius=12)
         self.greeting_card.pack(pady=(0, 0), padx=20, anchor="n")
 
+        self.greeting_canvas = ctk.CTkCanvas(self.greeting_card, width=1000, height=200, bg="#1E1E1E", highlightthickness=0)
+        self.greeting_canvas.pack(fill="both", expand=True)
+
+        self.greeting_label = ctk.CTkLabel(
+            self.greeting_card,
+            text="",
+            font=("Helvetica", 32, "bold"),
+            text_color="#1D5932",
+            bg_color="transparent"
+        )
+        self.greeting_label.place(relx=0.5, rely=0.7, anchor="center")
+
         # Determine greeting text based on time
-        now = datetime.datetime.now().hour
+        now = 8 # datetime.datetime.now().hour
         if 5 <= now < 12:
             greeting_text = "🌅 Good morning, user!"
+            self.animate_sunrise()
         elif 12 <= now < 18:
             greeting_text = "🌤️ Good afternoon, user!"
         elif 18 <= now < 22:
@@ -103,3 +116,36 @@ class MainScreen(ctk.CTkFrame):
             self.after_cancel(self.search_timer)
         if query:
             self.search_timer = self.after(800, lambda: self.switch_to_home_callback(query))
+    
+    def animate_sunrise(self):
+        # Sun starts below the card and rises up
+        canvas = self.greeting_canvas
+        canvas.delete("all")
+        width, height = 1000, 200
+        sun_radius = 30
+        start_y = height + sun_radius
+        end_y = height // 2
+
+        # Draw sky gradient (static for now)
+        canvas.create_rectangle(0, 0, width, height, fill="#FFD580", outline="")  # light yellow
+        canvas.create_rectangle(0, height//2, width, height, fill="#87CEEB", outline="")  # blue
+
+        # Sun (will animate)
+        sun = canvas.create_oval(
+            width//2 - sun_radius, start_y - sun_radius,
+            width//2 + sun_radius, start_y + sun_radius,
+            fill="#FFDF00", outline="#FDB813"
+        )
+
+        # Animate sun rising
+        steps = 40
+        duration = 1200  # ms
+        dy = (start_y - end_y) / steps
+
+        def animate(step=0):
+            if step > steps:
+                return
+            canvas.move(sun, 0, -dy)
+            self.after(duration // steps, lambda: animate(step + 1))
+
+        animate()
