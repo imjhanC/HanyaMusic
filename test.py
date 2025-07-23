@@ -1,6 +1,9 @@
 import customtkinter as ctk
 from PIL import Image, ImageTk
 import os
+from youtubesearchpython import VideosSearch
+from searchscreen import SearchScreen
+import threading
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -44,6 +47,8 @@ class App(ctk.CTk):
             corner_radius=10
         )
         self.searchbar.place(x=48, y=2)
+        self.searchbar.bind('<Return>', self.on_search)
+        self.loading_label = None
 
         self.user_icon = ctk.CTkLabel(self, text="", image=self.load_user_icon(), width=40, height=40)
         self.user_icon.place(relx=0.95, y=10, anchor="ne")
@@ -79,6 +84,48 @@ class App(ctk.CTk):
     def create_main_area(self):
         self.main_frame = ctk.CTkFrame(self, fg_color="black")
         self.main_frame.place(x=0, y=60, relwidth=1, relheight=1, anchor="nw")
+
+    def on_search(self, event=None):
+        query = self.searchbar.get().strip()
+        if not query:
+            return
+        # Show loading indicator
+        self.show_loading()
+        # Start search in a background thread
+        threading.Thread(target=self.perform_search, args=(query,), daemon=True).start()
+
+    def show_loading(self):
+        # Clear main_frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        self.loading_label = ctk.CTkLabel(self.main_frame, text="Searching...", font=ctk.CTkFont(size=24))
+        self.loading_label.pack(pady=40)
+
+    def perform_search(self, query):
+        try:
+            videos_search = VideosSearch(query)
+            results = []
+            for v in videos_search.result().get('result', []):
+                results.append({
+                    'title': v.get('title', 'No Title'),
+                    'thumbnail_url': v.get('thumbnails', [{}])[0].get('url', ''),
+                    'videoId': v.get('id', '')
+                })
+        except Exception as e:
+            results = []
+        # Update UI on main thread
+        self.after(0, self.display_results, results)
+
+    def display_results(self, results):
+        # Clear main_frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        if not results:
+            label = ctk.CTkLabel(self.main_frame, text="No results found or error occurred.", font=ctk.CTkFont(size=18))
+            label.pack(pady=40)
+            return
+        search_screen = SearchScreen(self.main_frame, results)
+        search_screen.pack(fill="both", expand=True)
 
 if __name__ == "__main__":
     app = App()
