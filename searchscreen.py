@@ -13,59 +13,79 @@ class SearchScreen(ctk.CTkFrame):
         self.no_more_results = False
         self.configure(fg_color="transparent")
         
-        # Main container frame
+        # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_container.pack(fill="both", expand=True, padx=0, pady=0)  # Remove padding
+        self.main_container.pack(fill="both", expand=True, padx=0, pady=0)
         
-        # Create scrollable canvas with proper expansion
+        # Configure grid weights for main container
+        self.main_container.grid_rowconfigure(0, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
+        
+        # Create a frame to hold the canvas and scrollbar
+        self.canvas_container = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        self.canvas_container.grid(row=0, column=0, sticky="nsew")
+        self.canvas_container.grid_rowconfigure(0, weight=1)
+        self.canvas_container.grid_columnconfigure(0, weight=1)
+        
+        # Create canvas with scrollbar
         self.canvas = ctk.CTkCanvas(
-            self.main_container, 
+            self.canvas_container,
             bg="#1a1a1a",
-            highlightthickness=0,
-            width=parent.winfo_width()  # Set initial width
+            highlightthickness=0
         )
         
         self.scrollbar = ctk.CTkScrollbar(
-            self.main_container, 
-            orientation="vertical", 
+            self.canvas_container,
+            orientation="vertical",
             command=self.canvas.yview
         )
         
         self.scrollable_frame = ctk.CTkFrame(
-            self.canvas, 
+            self.canvas,
             fg_color="transparent"
         )
         
-        # Configure the canvas scrolling
+        # Configure the scrollable frame
         self.scrollable_frame.bind(
             "<Configure>",
-            self._on_frame_configure
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")
+            )
         )
         
-        # Pack scrollbar first, then canvas
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True, padx=0, pady=0)
+        # Pack the canvas and scrollbar
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
         
         # Create window in canvas for the scrollable frame
         self.canvas_window = self.canvas.create_window(
-            (0, 0), 
-            window=self.scrollable_frame, 
+            (0, 0),
+            window=self.scrollable_frame,
             anchor="nw",
-            width=self.winfo_screenwidth()  # Set initial width
+            tags=("scrollable_frame",)
         )
         
+        # Configure canvas scrolling
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
         # Bind events
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.bind("<Configure>", self._on_window_configure)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind('<Enter>', self._check_scroll_end)
-        self.canvas.bind('<Configure>', self._check_scroll_end)
-        self.scrollbar.bind('<ButtonRelease-1>', self._check_scroll_end)
         
         # Initialize cards list
         self.cards = []
         self.create_results_grid()
+    
+    def _on_canvas_configure(self, event):
+        """Update the canvas window width when the canvas is resized"""
+        canvas_width = event.width
+        self.canvas.itemconfig("scrollable_frame", width=canvas_width)
+    
+    def _on_window_configure(self, event):
+        """Update the canvas scroll region when the window is resized"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def _on_frame_configure(self, event=None):
         """Update the canvas scroll region and window width"""
@@ -75,11 +95,6 @@ class SearchScreen(ctk.CTkFrame):
         canvas_width = self.canvas.winfo_width()
         if canvas_width > 1:  # Ensure we have a valid width
             self.canvas.itemconfig(self.canvas_window, width=canvas_width)
-    
-    def _on_canvas_configure(self, event):
-        """Handle canvas resize"""
-        if event.width > 1:  # Ensure we have a valid width
-            self.canvas.itemconfig(self.canvas_window, width=event.width)
     
     def on_canvas_configure(self, event):
         # Update the scroll region
@@ -141,31 +156,28 @@ class SearchScreen(ctk.CTkFrame):
         self.scrollable_frame.update_idletasks()
 
     def _add_card(self, result, idx):
-        # Create main card frame
+        # Create main card frame with dynamic width
         card = ctk.CTkFrame(
-            self.scrollable_frame, 
+            self.scrollable_frame,
             fg_color="#222222",
             corner_radius=10,
             height=100
         )
         
-        # Configure grid weights for full width
+        # Configure grid for the card to take full width
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
         card.grid_columnconfigure(1, weight=1)  # Make the content area expandable
         
-        # Thumbnail (fixed size)
-        placeholder_img = Image.new("RGB", (120, 80), color="#444444")
-        tk_placeholder = ctk.CTkImage(light_image=placeholder_img, dark_image=placeholder_img, size=(120, 80))
-        
-        # Create a container for the thumbnail to maintain aspect ratio
+        # Thumbnail container with fixed aspect ratio
         thumb_container = ctk.CTkFrame(card, fg_color="transparent", width=120, height=80)
         thumb_container.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
-        thumb_container.pack_propagate(False)  # Prevent container from resizing
+        thumb_container.grid_propagate(False)  # Prevent container from resizing
         
+        # Thumbnail label
         thumb = ctk.CTkLabel(thumb_container, text="")
         thumb.pack(expand=True, fill="both")
         
-        # Start async image loading
+        # Load thumbnail in background
         def load_image_async():
             try:
                 response = requests.get(result['thumbnail_url'], timeout=5)
@@ -181,19 +193,19 @@ class SearchScreen(ctk.CTkFrame):
         
         threading.Thread(target=load_image_async, daemon=True).start()
         
-        # Content area (title, artist, etc.)
+        # Content frame that expands with window
         content_frame = ctk.CTkFrame(card, fg_color="transparent")
         content_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(0, 20), pady=10)
         content_frame.columnconfigure(0, weight=1)
         
-        # Title
+        # Title with dynamic wrapping
         title = ctk.CTkLabel(
             content_frame,
             text=result['title'],
             font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w",
             justify="left",
-            wraplength=0  # Allow text to wrap naturally
+            wraplength=0  # Will be updated on resize
         )
         title.grid(row=0, column=0, sticky="nsw", pady=(0, 5))
         
@@ -229,7 +241,7 @@ class SearchScreen(ctk.CTkFrame):
             hover_color="#1ed760",
             font=ctk.CTkFont(size=16, weight="bold")
         )
-        play_btn.grid(row=0, column=2, rowspan=2, padx=15, pady=0, sticky="ns")
+        play_btn.grid(row=0, column=2, rowspan=2, padx=15, pady=0, sticky="nse")
         
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:
@@ -246,7 +258,16 @@ class SearchScreen(ctk.CTkFrame):
         if not hasattr(self, '_video_ids'):
             self._video_ids = set()
         self._video_ids.add(result.get('videoId'))
-
+        
+        # Update wraplength on window resize
+        def update_wraplength(event):
+            # Calculate available width for the title (total width - thumbnail - play button - paddings)
+            available_width = max(100, card.winfo_width() - 220)  # 220 = thumbnail(120) + play button(50) + paddings(50)
+            title.configure(wraplength=available_width)
+            
+        # Bind to card resize
+        card.bind('<Configure>', update_wraplength)
+        
     def get_all_video_ids(self):
         # Return all video IDs currently shown
         if hasattr(self, '_video_ids'):
