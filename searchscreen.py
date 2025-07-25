@@ -253,17 +253,17 @@ class SearchScreen(ctk.CTkFrame):
         play_btn = ctk.CTkButton(
             card,
             text="▶",
-            width=40,
+            width=60,
             height=40,
             corner_radius=20,
             fg_color="#1DB954",
             hover_color="#1ed760",
-            text_color="#000000",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=20, weight="bold"),
             border_width=0,
             border_spacing=0
         )
-        play_btn.grid(row=0, column=2, rowspan=2, padx=(0, 15), pady=0, sticky="nsew")
+        play_btn.grid(row=0, column=2, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:
