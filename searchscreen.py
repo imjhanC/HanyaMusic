@@ -13,6 +13,10 @@ class SearchScreen(ctk.CTkFrame):
         self.no_more_results = False
         self.configure(fg_color="transparent")
         
+        # Track window resize state
+        self._resize_in_progress = False
+        self._resize_after_id = None
+        
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True, padx=0, pady=0)
@@ -80,28 +84,35 @@ class SearchScreen(ctk.CTkFrame):
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
-        canvas_width = event.width
-        self.canvas.itemconfig("scrollable_frame", width=canvas_width)
+        if self._resize_in_progress:
+            return
+            
+        if event.width > 1:  # Ensure we have a valid width
+            self.canvas.itemconfig("scrollable_frame", width=event.width)
     
     def _on_window_configure(self, event):
-        """Update the canvas scroll region when the window is resized"""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        """Handle window resize with debounce"""
+        if self._resize_after_id:
+            self.after_cancel(self._resize_after_id)
+            
+        self._resize_after_id = self.after(200, self._process_resize)
     
-    def _on_frame_configure(self, event=None):
-        """Update the canvas scroll region and window width"""
-        # Update scroll region
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        # Update canvas window width to match canvas width
-        canvas_width = self.canvas.winfo_width()
-        if canvas_width > 1:  # Ensure we have a valid width
-            self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+    def _process_resize(self):
+        """Process resize after a short delay to prevent excessive updates"""
+        self._resize_in_progress = True
+        try:
+            # Update canvas scroll region
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            
+            # Update card layouts
+            for card in self.cards:
+                if hasattr(card, '_title') and card._title.winfo_exists():
+                    available_width = max(100, card.winfo_width() - 220)
+                    card._title.configure(wraplength=available_width)
+        finally:
+            self._resize_in_progress = False
+            self._resize_after_id = None
     
-    def on_canvas_configure(self, event):
-        # Update the scroll region
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        # Update the canvas window width to match canvas width
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         self._check_scroll_end(event)
@@ -164,9 +175,13 @@ class SearchScreen(ctk.CTkFrame):
             height=100
         )
         
+        # Store card reference
+        card._title = None  # Will store the title widget reference
+        
         # Configure grid for the card to take full width
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
         card.grid_columnconfigure(1, weight=1)  # Make the content area expandable
+        card.grid_columnconfigure(2, weight=0, minsize=70)  # Make the button column just wide enough
         
         # Thumbnail container with fixed aspect ratio
         thumb_container = ctk.CTkFrame(card, fg_color="transparent", width=120, height=80)
@@ -185,8 +200,9 @@ class SearchScreen(ctk.CTkFrame):
                 img.thumbnail((120, 80), Image.Resampling.LANCZOS)
                 tk_image = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                 def update_image():
-                    thumb.configure(image=tk_image)
-                    thumb.image = tk_image
+                    if thumb.winfo_exists():  # Check if widget still exists
+                        thumb.configure(image=tk_image)
+                        thumb.image = tk_image
                 self.after(0, update_image)
             except Exception as e:
                 print(f"Error loading image: {e}")
@@ -208,6 +224,9 @@ class SearchScreen(ctk.CTkFrame):
             wraplength=0  # Will be updated on resize
         )
         title.grid(row=0, column=0, sticky="nsw", pady=(0, 5))
+        
+        # Store title reference on card for later updates
+        card._title = title
         
         # Additional info (uploader, duration, views)
         details = []
@@ -234,14 +253,17 @@ class SearchScreen(ctk.CTkFrame):
         play_btn = ctk.CTkButton(
             card,
             text="▶",
-            width=50,
-            height=50,
-            corner_radius=25,
+            width=40,
+            height=40,
+            corner_radius=20,
             fg_color="#1DB954",
             hover_color="#1ed760",
-            font=ctk.CTkFont(size=16, weight="bold")
+            text_color="#000000",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            border_width=0,
+            border_spacing=0
         )
-        play_btn.grid(row=0, column=2, rowspan=2, padx=15, pady=0, sticky="nse")
+        play_btn.grid(row=0, column=2, rowspan=2, padx=(0, 15), pady=0, sticky="nsew")
         
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:

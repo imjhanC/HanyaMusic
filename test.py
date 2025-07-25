@@ -24,8 +24,23 @@ class App(ctk.CTk):
         y = (screen_height - window_height) // 2
         self.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.title("HanyaMusic")
-        self.resizable(True, True)
-
+        
+        # Configure window resizing
+        self.minsize(800, 600)  # Set minimum window size
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Disable window resizing animation on Windows
+        try:
+            self.wm_attributes('-zoomed', False)  # Disable zoomed state
+            self.update_idletasks()
+            self.wm_attributes('-fullscreen', False)
+        except Exception:
+            pass
+            
+        # Prevent window from being resized too small
+        self.update_idletasks()
+        
         # State
         self.menu_visible = False
         self.search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)  # Increased workers
@@ -33,6 +48,8 @@ class App(ctk.CTk):
         self.current_search_query = ""
         self.search_delay = 200  # Reduced delay for better responsiveness
         self.after_id = None
+        self._resize_in_progress = False
+        self._resize_after_id = None
 
         # Pre-compiled regex patterns and cache
         self.duration_cache = {}
@@ -56,6 +73,9 @@ class App(ctk.CTk):
         # Layout containers
         self.create_main_area()
         self.create_topbar()
+        
+        # Bind window events
+        self.bind('<Configure>', self._on_window_configure)
 
     def create_topbar(self):
         search_font = ctk.CTkFont(family="Helvetica", size=18)
@@ -404,6 +424,37 @@ class App(ctk.CTk):
             
         except Exception as e:
             print(f"Error finalizing display: {e}")
+
+    def _on_window_configure(self, event):
+        """Handle window resize with debounce"""
+        if event.widget != self:  # Only process main window resize
+            return
+            
+        if self._resize_after_id:
+            self.after_cancel(self._resize_after_id)
+            
+        self._resize_after_id = self.after(200, self._process_resize)
+    
+    def _process_resize(self):
+        """Process resize after a short delay to prevent excessive updates"""
+        if self._resize_in_progress:
+            return
+            
+        self._resize_in_progress = True
+        try:
+            # Update any layout that needs to respond to window size
+            if hasattr(self, 'search_frame'):
+                # Update search bar width
+                window_width = self.winfo_width()
+                search_width = min(600, max(300, window_width - 200))  # Keep search bar between 300-600px
+                self.search_frame.configure(width=search_width)
+                
+                # Update search bar position
+                if hasattr(self, 'search_bar'):
+                    self.search_bar.configure(width=search_width - 40)  # Account for padding
+        finally:
+            self._resize_after_id = None
+            self._resize_in_progress = False
 
     def __del__(self):
         """Cleanup when app is destroyed"""
