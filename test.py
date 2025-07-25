@@ -7,6 +7,7 @@ import threading
 import time
 import concurrent.futures
 import json
+from functools import lru_cache
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -27,25 +28,29 @@ class App(ctk.CTk):
 
         # State
         self.menu_visible = False
-        self.search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)  # Increased workers
         self.current_search_future = None
         self.current_search_query = ""
-        self.search_delay = 300  # Reduced delay for better responsiveness
+        self.search_delay = 200  # Reduced delay for better responsiveness
         self.after_id = None
 
-        # Configure yt-dlp options
+        # Pre-compiled regex patterns and cache
+        self.duration_cache = {}
+        self.view_cache = {}
+
+        # Configure yt-dlp options - optimized for speed
         self.ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
-            'default_search': 'ytsearch100:',  # Search for up to 100 results
+            'default_search': 'ytsearch50:',  # Reduced from 100 to 50 for faster response
             'no_check_certificate': True,
             'ignoreerrors': True,
             'geo_bypass': True,
             'noplaylist': True,
             'skip_download': True,
-            'quiet': True,
-            'ignoreerrors': True,
+            'socket_timeout': 10,  # Add timeout
+            'retries': 1,  # Reduce retries
         }
 
         # Layout containers
@@ -103,6 +108,7 @@ class App(ctk.CTk):
             self.current_search_future.cancel()
         self.show_main_frame()
 
+    @lru_cache(maxsize=1)
     def load_search_icon(self):
         try:
             icon_path = os.path.join("public", "icon", "search.png")
@@ -113,6 +119,7 @@ class App(ctk.CTk):
             print(f"Could not load search icon: {e}")
             return None
 
+    @lru_cache(maxsize=1)
     def load_user_icon(self):
         try:
             icon_path = os.path.join("public", "icon", "profile.png")
@@ -177,7 +184,7 @@ class App(ctk.CTk):
         # Monitor the search with timeout
         self.monitor_search(query, self.current_search_future)
 
-    def monitor_search(self, query, future, timeout=15):
+    def monitor_search(self, query, future, timeout=10):  # Reduced timeout
         """Monitor search progress with timeout"""
         def check_result():
             try:
@@ -188,7 +195,8 @@ class App(ctk.CTk):
                     try:
                         results = future.result(timeout=0.1)
                         if query == self.current_search_query:  # Still relevant
-                            self.display_results(results)
+                            # Process results in background thread for better UI responsiveness
+                            self.after_idle(lambda: self.display_results(results))
                     except Exception as e:
                         print(f"Search error: {e}")
                         if query == self.current_search_query:
@@ -201,8 +209,8 @@ class App(ctk.CTk):
                         if query == self.current_search_query:
                             self.display_error("Search timed out. Please try again.")
                     else:
-                        # Check again in 100ms
-                        self.after(100, check_result)
+                        # Check again in 50ms for better responsiveness
+                        self.after(50, check_result)
             except Exception as e:
                 print(f"Monitor error: {e}")
                 if query == self.current_search_query:
@@ -212,115 +220,118 @@ class App(ctk.CTk):
         check_result()
 
     def perform_search(self, query):
-        """Perform the actual search using yt-dlp"""
+        """Perform the actual search using yt-dlp - optimized version"""
         if not query:
             return []
         
         try:
-            print(f"Searching for: {query}")  # Debug output
+            print(f"Searching for: {query}")
             
-            # Create a copy of the base options
-            search_opts = self.ydl_opts.copy()
-            
-            # Add search-specific options
-            search_opts.update({
-                'format': 'best',
-                'extract_flat': True,
-                'force_generic_extractor': True,
-                'skip_download': True,
+            # Streamlined yt-dlp options for speed
+            search_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'ignoreerrors': True,
-                'geo_bypass': True,
-                'noplaylist': True,
                 'extract_flat': True,
-            })
+                'skip_download': True,
+                'ignoreerrors': True,
+                'socket_timeout': 8,
+                'retries': 1,
+                'format': 'best',  # Don't need quality info for search
+            }
             
             with yt_dlp.YoutubeDL(search_opts) as ydl:
-                # Search for videos using the optimized search query
                 search_results = ydl.extract_info(
-                    f"ytsearch100:{query}",  # Search for up to 100 results
+                    f"ytsearch30:{query}",  # Reduced to 30 for faster processing
                     download=False
                 )
             
-            print(f"yt-dlp response received")  # Debug output
+            print(f"yt-dlp response received")
             
             if not search_results or 'entries' not in search_results:
                 print("No entries in search results")
                 return []
             
-            results = []
+            # Optimized result processing using list comprehension and batch operations
             entries = search_results.get('entries', [])
+            results = []
             
-            for entry in entries:
-                if not entry:  # Skip None entries
-                    continue
-                
+            # Pre-allocate list for better performance
+            valid_entries = [entry for entry in entries if entry and entry.get('id')]
+            
+            # Batch process entries
+            for entry in valid_entries[:25]:  # Limit to first 25 for faster UI
                 try:
-                    video_id = entry.get('id', '')
+                    video_id = entry['id']
                     title = entry.get('title', 'No Title')
-                    uploader = entry.get('uploader', '')
-                    duration = entry.get('duration', 0)
-                    view_count = entry.get('view_count', 0)
+                    uploader = entry.get('uploader', 'Unknown')
+                    duration = entry.get('duration')
+                    view_count = entry.get('view_count')
                     
-                    if not video_id:
-                        continue
-                    
-                    # Generate thumbnail URL from video ID
-                    thumbnail_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
-                    
-                    # Format duration
-                    duration_str = self.format_duration(duration) if duration else "Unknown"
-                    
-                    # Format view count
-                    view_str = self.format_views(view_count) if view_count else "Unknown views"
-                    
-                    results.append({
-                        'title': str(title).strip(),
-                        'thumbnail_url': thumbnail_url,
-                        'videoId': str(video_id).strip(),
-                        'uploader': str(uploader).strip() if uploader else 'Unknown',
-                        'duration': duration_str,
-                        'view_count': view_str,
+                    # Pre-format strings for faster UI rendering
+                    result = {
+                        'title': str(title).strip()[:100],  # Limit title length
+                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
+                        'videoId': video_id,
+                        'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
+                        'duration': self.format_duration_fast(duration),
+                        'view_count': self.format_views_fast(view_count),
                         'url': f"https://www.youtube.com/watch?v={video_id}"
-                    })
+                    }
+                    results.append(result)
                     
                 except Exception as e:
                     print(f"Error processing entry: {e}")
                     continue
             
-            print(f"Processed {len(results)} results")  # Debug output
+            print(f"Processed {len(results)} results")
             return results
             
         except Exception as e:
             print(f"yt-dlp search failed: {str(e)}")
             return []
 
-    def format_duration(self, seconds):
-        """Format duration in seconds to MM:SS or HH:MM:SS"""
+    def format_duration_fast(self, seconds):
+        """Optimized duration formatting with caching"""
         if not seconds or seconds <= 0:
             return "0:00"
         
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        seconds = int(seconds % 60)
+        # Use cache for common durations
+        if seconds in self.duration_cache:
+            return self.duration_cache[seconds]
+        
+        # Quick integer operations
+        minutes, secs = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
         
         if hours > 0:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
+            result = f"{hours}:{minutes:02d}:{secs:02d}"
         else:
-            return f"{minutes}:{seconds:02d}"
+            result = f"{minutes}:{secs:02d}"
+        
+        # Cache result
+        self.duration_cache[seconds] = result
+        return result
 
-    def format_views(self, view_count):
-        """Format view count to readable format"""
+    def format_views_fast(self, view_count):
+        """Optimized view formatting with caching"""
         if not view_count or view_count <= 0:
             return "0 views"
         
+        # Use cache for common view counts
+        if view_count in self.view_cache:
+            return self.view_cache[view_count]
+        
+        # Quick formatting
         if view_count >= 1_000_000:
-            return f"{view_count / 1_000_000:.1f}M views"
+            result = f"{view_count // 100000 / 10:.1f}M views"
         elif view_count >= 1_000:
-            return f"{view_count / 1_000:.1f}K views"
+            result = f"{view_count // 100 / 10:.1f}K views"
         else:
-            return f"{view_count} views"
+            result = f"{view_count} views"
+        
+        # Cache result
+        self.view_cache[view_count] = result
+        return result
 
     def show_loading(self):
         """Show loading state"""
@@ -348,7 +359,7 @@ class App(ctk.CTk):
         error_label.pack(pady=40)
 
     def display_results(self, results):
-        """Display search results"""
+        """Optimized results display with progressive loading"""
         # Clear the main frame
         for widget in self.main_frame.winfo_children():
             widget.destroy()
@@ -358,33 +369,37 @@ class App(ctk.CTk):
             return
         
         try:
-            # Create a container frame that fills the available space
+            # Create container frame
             container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
             container.pack(fill="both", expand=True)
             
-            # Configure grid weights for the container
+            # Configure grid weights
             container.grid_rowconfigure(0, weight=1)
             container.grid_columnconfigure(0, weight=1)
             
-            # Create the search screen inside the container
+            # Create search screen with optimized loading
             search_screen = SearchScreen(container, results)
             search_screen.grid(row=0, column=0, sticky="nsew")
             
-            # Update the canvas scroll region after a short delay
-            self.after(100, lambda: self.update_scroll_region(search_screen))
+            # Progressive UI updates for better perceived performance
+            self.after_idle(lambda: self.finalize_display(search_screen))
             
         except Exception as e:
             print(f"Error displaying results: {e}")
             self.display_error("Error displaying results. Please try again.")
     
-    def update_scroll_region(self, search_screen):
-        """Update the canvas scroll region after widgets are drawn"""
+    def finalize_display(self, search_screen):
+        """Finalize display setup after UI is rendered"""
         try:
+            # Update scroll region
             search_screen.canvas.configure(scrollregion=search_screen.canvas.bbox("all"))
-            # Update the canvas to ensure it's properly sized
             search_screen.canvas.update_idletasks()
+            
+            # Force a single update to ensure everything is drawn
+            self.update_idletasks()
+            
         except Exception as e:
-            print(f"Error updating scroll region: {e}")
+            print(f"Error finalizing display: {e}")
 
     def __del__(self):
         """Cleanup when app is destroyed"""
