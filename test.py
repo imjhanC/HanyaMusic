@@ -8,6 +8,7 @@ import time
 import concurrent.futures
 import json
 from functools import lru_cache
+import math
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -365,16 +366,109 @@ class App(ctk.CTk):
         return result
 
     def show_loading(self):
-        """Show loading state"""
+        """Show animated loading state with a modern spinner"""
+        # Clear existing widgets
         for widget in self.main_frame.winfo_children():
             widget.destroy()
         
-        self.loading_label = ctk.CTkLabel(
-            self.main_frame, 
-            text="Searching...", 
-            font=ctk.CTkFont(size=24)
+        # Create container for centered content
+        container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        container.pack(expand=True, fill="both")
+        
+        # Add loading text with dot animation
+        self.loading_text = ctk.CTkLabel(
+            container,
+            text="Searching",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#1DB954"
         )
-        self.loading_label.pack(pady=40)
+        self.loading_text.pack(pady=(0, 20))
+        
+        # Create a frame for the spinner
+        spinner_frame = ctk.CTkFrame(container, fg_color="transparent", width=80, height=80)
+        spinner_frame.pack(pady=10)
+        spinner_frame.pack_propagate(False)
+        
+        # Create spinner canvas
+        self.spinner_canvas = ctk.CTkCanvas(
+            spinner_frame,
+            width=60,
+            height=60,
+            bg="#000000",
+            highlightthickness=0
+        )
+        self.spinner_canvas.pack(expand=True)
+        
+        # Animation variables
+        self.spinner_angle = 0
+        self.dot_radius = 5
+        self.spinner_colors = [
+            "#1DB954", "#1ed760", "#4dff9d", 
+            "#4dff9d", "#1ed760", "#1DB954"
+        ]
+        
+        # Start the animation
+        self.animate_spinner()
+
+    def animate_spinner(self):
+        """Animate the loading spinner"""
+        if not hasattr(self, 'spinner_canvas') or not self.spinner_canvas.winfo_exists():
+            return
+            
+        canvas = self.spinner_canvas
+        canvas.delete("all")
+        
+        center_x = canvas.winfo_width() // 2
+        center_y = canvas.winfo_height() // 2
+        radius = 20
+        
+        # Draw the spinner dots
+        for i in range(6):
+            angle = self.spinner_angle + (i * 60)
+            rad = math.radians(angle)
+            x = center_x + (radius * math.cos(rad))
+            y = center_y + (radius * math.sin(rad))
+            
+            # Calculate alpha for fading effect (0.3 to 1.0)
+            alpha = 0.3 + (0.7 * (i / 5.0))
+            color = self.add_alpha_to_hex(self.spinner_colors[i], alpha)
+            
+            canvas.create_oval(
+                x - self.dot_radius, y - self.dot_radius,
+                x + self.dot_radius, y + self.dot_radius,
+                fill=color, outline=""
+            )
+        
+        # Update the angle for next frame
+        self.spinner_angle = (self.spinner_angle + 6) % 360
+        
+        # Update the searching dots
+        dots = "." * ((self.spinner_angle // 60) % 4)
+        if hasattr(self, 'loading_text') and self.loading_text.winfo_exists():
+            self.loading_text.configure(text=f"Searching{dots}")
+        
+        # Schedule next frame
+        self.after(100, self.animate_spinner)
+
+    def add_alpha_to_hex(self, hex_color, alpha):
+        """Add alpha value to a hex color"""
+        if alpha < 0:
+            alpha = 0
+        elif alpha > 1:
+            alpha = 1
+            
+        # Convert hex to RGB
+        hex_color = hex_color.lstrip('#')
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        
+        # Create a darker version for the spinner
+        r = max(0, int(r * 0.7))
+        g = max(0, int(g * 0.7))
+        b = max(0, int(b * 0.7))
+        
+        return f'#{r:02x}{g:02x}{b:02x}'
 
     def display_error(self, error_message):
         """Display error message"""
