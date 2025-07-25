@@ -38,10 +38,14 @@ class App(ctk.CTk):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
-            'default_search': 'ytsearch:', # Search YouTube, limit to 20 results
+            'default_search': 'ytsearch100:',  # Search for up to 100 results
             'no_check_certificate': True,
             'ignoreerrors': True,
-            'playlistend': 500,
+            'geo_bypass': True,
+            'noplaylist': True,
+            'skip_download': True,
+            'quiet': True,
+            'ignoreerrors': True,
         }
 
         # Layout containers
@@ -215,10 +219,27 @@ class App(ctk.CTk):
         try:
             print(f"Searching for: {query}")  # Debug output
             
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                # Search for videos
+            # Create a copy of the base options
+            search_opts = self.ydl_opts.copy()
+            
+            # Add search-specific options
+            search_opts.update({
+                'format': 'best',
+                'extract_flat': True,
+                'force_generic_extractor': True,
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True,
+                'ignoreerrors': True,
+                'geo_bypass': True,
+                'noplaylist': True,
+                'extract_flat': True,
+            })
+            
+            with yt_dlp.YoutubeDL(search_opts) as ydl:
+                # Search for videos using the optimized search query
                 search_results = ydl.extract_info(
-                    f"ytsearch100:{query}",  # Search for up to 20 results
+                    f"ytsearch100:{query}",  # Search for up to 100 results
                     download=False
                 )
             

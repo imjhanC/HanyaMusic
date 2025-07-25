@@ -7,41 +7,82 @@ class SearchScreen(ctk.CTkFrame):
     def __init__(self, parent, results, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.results = results
+        self.configure(fg_color="transparent")
         
-        # Configure grid weights
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        # Main container frame
+        self.main_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_container.pack(fill="both", expand=True, padx=0, pady=2)
         
-        # Create main container with scrollbar
-        self.canvas = ctk.CTkCanvas(self, bg="#1a1a1a", highlightthickness=0)
-        self.scrollbar = ctk.CTkScrollbar(self, orientation="vertical", command=self.canvas.yview)
-        self.scrollable_frame = ctk.CTkFrame(self.canvas, fg_color="transparent")
-        
-        # Configure canvas scrolling
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Create scrollable canvas - remove fixed width
+        self.canvas = ctk.CTkCanvas(
+            self.main_container, 
+            bg="#1a1a1a", 
+            highlightthickness=0
+            # Remove width parameter - let it size naturally
         )
         
-        # Create window in canvas for the scrollable frame
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollbar = ctk.CTkScrollbar(
+            self.main_container, 
+            orientation="vertical", 
+            command=self.canvas.yview
+        )
         
-        # Pack canvas and scrollbar
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.scrollable_frame = ctk.CTkFrame(
+            self.canvas, 
+            fg_color="transparent"
+        )
+        
+        # Configure the canvas scrolling
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")
+            )
+        )
+        
+        # Pack scrollbar first, then canvas
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True, padx=0, pady=0)
+        
+        # Create window in canvas for the scrollable frame - let it size dynamically
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
         # Bind mousewheel for scrolling
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         
-        # Create results
-        self.create_results_list()
+        # Bind canvas configure event to update scroll region and window width
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        
+        # Create results grid
+        self.create_results_grid()
+    
+    def on_canvas_configure(self, event):
+        # Update the scroll region
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Update the canvas window width to match canvas width
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
     
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def create_results_list(self):
+    def create_results_grid(self):
+        # Configure grid for scrollable frame
+        self.scrollable_frame.columnconfigure(0, weight=1)
+        
+        # Create a frame for each result item
         for idx, result in enumerate(self.results):
+            # Create card frame that will span the full width
+            card = ctk.CTkFrame(
+                self.scrollable_frame, 
+                fg_color="#222222",
+                corner_radius=10,
+                height=100
+            )
+            # Make card expand to fill available width
+            card.grid(row=idx, column=0, sticky="nsew", padx=15, pady=5)
+            card.grid_columnconfigure(1, weight=1)  # Make the text area expandable
+            
             # Download thumbnail image
             try:
                 response = requests.get(result['thumbnail_url'])
@@ -49,55 +90,53 @@ class SearchScreen(ctk.CTkFrame):
                 image = Image.open(BytesIO(img_data)).resize((120, 80), Image.LANCZOS)
                 tk_image = ctk.CTkImage(light_image=image, dark_image=image, size=(120, 80))
             except Exception as e:
-                print(f"Error loading thumbnail: {e}")
+                print(f"Error loading image: {e}")
                 tk_image = None
-
-            # Row frame
-            row = ctk.CTkFrame(self.scrollable_frame, fg_color="#222", corner_radius=8)
-            row.pack(fill="x", padx=0, pady=6)
-
+            
             # Thumbnail
             if tk_image:
-                thumb = ctk.CTkLabel(row, image=tk_image, text="", width=120, height=80)
+                thumb = ctk.CTkLabel(card, image=tk_image, text="")
                 thumb.image = tk_image  # Keep reference
-                thumb.pack(side="left", padx=8, pady=8)
+                thumb.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
             else:
-                thumb = ctk.CTkLabel(row, text="No Image", width=120, height=80)
-                thumb.pack(side="left", padx=8, pady=8)
-
-            # Title and other details
-            text_frame = ctk.CTkFrame(row, fg_color="transparent")
-            text_frame.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=8)
+                thumb = ctk.CTkLabel(card, text="No Image", width=120, height=80)
+                thumb.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
             
+            # Title - make it expand to fill available space
             title = ctk.CTkLabel(
-                text_frame, 
-                text=result.get('title', 'No Title'),
+                card,
+                text=result['title'],
                 font=ctk.CTkFont(size=16, weight="bold"),
                 anchor="w",
                 justify="left"
+                # Remove fixed wraplength - let it adapt to available space
             )
-            title.pack(anchor="w")
+            title.grid(row=0, column=1, sticky="nsew", padx=(0, 20), pady=(10, 2))
             
-            # Add uploader and other details if available
-            if 'uploader' in result or 'duration' in result:
-                details = f"{result.get('uploader', '')} • {result.get('duration', '')}"
-                if details.strip():
-                    detail_label = ctk.CTkLabel(
-                        text_frame,
-                        text=details,
-                        font=ctk.CTkFont(size=12),
-                        text_color="gray",
-                        anchor="w"
-                    )
-                    detail_label.pack(anchor="w", pady=(2, 0))
-            
-            # Add view count if available
-            if 'view_count' in result:
-                views = ctk.CTkLabel(
-                    text_frame,
-                    text=result['view_count'],
-                    font=ctk.CTkFont(size=12),
+            # Additional info (uploader, duration, views)
+            details = []
+            if 'uploader' in result and result['uploader']:
+                details.append(result['uploader'])
+            if 'duration' in result and result['duration']:
+                details.append(result['duration'])
+                
+            if details:
+                details_text = " • ".join(details)
+                details_label = ctk.CTkLabel(
+                    card,
+                    text=details_text,
+                    font=ctk.CTkFont(size=14),
                     text_color="gray",
-                    anchor="w"
+                    anchor="w",
+                    justify="left"
                 )
-                views.pack(anchor="w", pady=(2, 0))
+                details_label.grid(row=1, column=1, sticky="nsw", padx=(0, 20), pady=(2, 10))
+            
+            # Add a separator between items (except after the last one)
+            if idx < len(self.results) - 1:
+                separator = ctk.CTkFrame(
+                    self.scrollable_frame,
+                    height=1,
+                    fg_color="#333333"
+                )
+                separator.grid(row=idx*2 + 1, column=0, sticky="ew", padx=20, pady=2)
