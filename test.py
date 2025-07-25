@@ -219,14 +219,16 @@ class App(ctk.CTk):
         start_time = time.time()
         check_result()
 
-    def perform_search(self, query):
-        """Perform the actual search using yt-dlp - optimized version"""
+    def perform_search(self, query, offset=0, exclude_ids=None, batch_size=10):
+        """Perform the actual search using yt-dlp - now supports pagination and exclusion."""
         if not query:
             return []
-        
+        if exclude_ids is None:
+            exclude_ids = set()
+        else:
+            exclude_ids = set(exclude_ids)
         try:
-            print(f"Searching for: {query}")
-            
+            print(f"Searching for: {query} (offset={offset}, exclude={len(exclude_ids)})")
             # Streamlined yt-dlp options for speed
             search_opts = {
                 'quiet': True,
@@ -236,59 +238,68 @@ class App(ctk.CTk):
                 'ignoreerrors': True,
                 'socket_timeout': 8,
                 'retries': 1,
-                'format': 'best',  # Don't need quality info for search
+                'format': 'best',
             }
-            
+            # Fetch more results than needed to allow for exclusion
+            fetch_count = max(batch_size * 2, 30)
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 search_results = ydl.extract_info(
-                    f"ytsearch30:{query}",  # Reduced to 30 for faster processing
+                    f"ytsearch{fetch_count + offset}:{query}",
                     download=False
                 )
-            
             print(f"yt-dlp response received")
-            
             if not search_results or 'entries' not in search_results:
                 print("No entries in search results")
                 return []
-            
-            # Optimized result processing using list comprehension and batch operations
             entries = search_results.get('entries', [])
-            results = []
-            
-            # Pre-allocate list for better performance
-            valid_entries = [entry for entry in entries if entry and entry.get('id')]
-            
-            # Batch process entries
-            for entry in valid_entries[:25]:  # Limit to first 25 for faster UI
-                try:
-                    video_id = entry['id']
-                    title = entry.get('title', 'No Title')
-                    uploader = entry.get('uploader', 'Unknown')
-                    duration = entry.get('duration')
-                    view_count = entry.get('view_count')
-                    
-                    # Pre-format strings for faster UI rendering
-                    result = {
-                        'title': str(title).strip()[:100],  # Limit title length
-                        'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                        'videoId': video_id,
-                        'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
-                        'duration': self.format_duration_fast(duration),
-                        'view_count': self.format_views_fast(view_count),
-                        'url': f"https://www.youtube.com/watch?v={video_id}"
-                    }
-                    results.append(result)
-                    
-                except Exception as e:
-                    print(f"Error processing entry: {e}")
+            # Skip offset and filter out excluded IDs
+            filtered = []
+            seen = set()
+            for entry in entries[offset:]:
+                if not entry or not entry.get('id'):
                     continue
-            
-            print(f"Processed {len(results)} results")
-            return results
-            
+                vid = entry['id']
+                if vid in exclude_ids or vid in seen:
+                    continue
+                seen.add(vid)
+                title = entry.get('title', 'No Title')
+                uploader = entry.get('uploader', 'Unknown')
+                duration = entry.get('duration')
+                view_count = entry.get('view_count')
+                result = {
+                    'title': str(title).strip()[:100],
+                    'thumbnail_url': f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                    'videoId': vid,
+                    'uploader': str(uploader).strip()[:50] if uploader else 'Unknown',
+                    'duration': self.format_duration_fast(duration),
+                    'view_count': self.format_views_fast(view_count),
+                    'url': f"https://www.youtube.com/watch?v={vid}"
+                }
+                filtered.append(result)
+                if len(filtered) >= batch_size:
+                    break
+            print(f"Processed {len(filtered)} results (offset={offset})")
+            return filtered
         except Exception as e:
             print(f"yt-dlp search failed: {str(e)}")
             return []
+
+    def load_more_results(self, callback, batch_size=10):
+        """Called by SearchScreen to load more results for infinite scroll."""
+        query = self.current_search_query
+        if not query:
+            callback([])
+            return
+        # Gather all video IDs currently shown
+        if hasattr(self, 'search_screen') and hasattr(self.search_screen, 'get_all_video_ids'):
+            exclude_ids = self.search_screen.get_all_video_ids()
+        else:
+            exclude_ids = []
+        offset = len(exclude_ids)
+        def do_search():
+            results = self.perform_search(query, offset=offset, exclude_ids=exclude_ids, batch_size=batch_size)
+            self.after_idle(lambda: callback(results))
+        threading.Thread(target=do_search, daemon=True).start()
 
     def format_duration_fast(self, seconds):
         """Optimized duration formatting with caching"""
@@ -359,31 +370,24 @@ class App(ctk.CTk):
         error_label.pack(pady=40)
 
     def display_results(self, results):
-        """Optimized results display with progressive loading"""
+        """Optimized results display with progressive loading and infinite scroll support."""
         # Clear the main frame
         for widget in self.main_frame.winfo_children():
             widget.destroy()
-        
         if not results:
             self.display_error("No results found. Try a different search term.")
             return
-        
         try:
-            # Create container frame
             container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
             container.pack(fill="both", expand=True)
-            
-            # Configure grid weights
             container.grid_rowconfigure(0, weight=1)
             container.grid_columnconfigure(0, weight=1)
-            
-            # Create search screen with optimized loading
-            search_screen = SearchScreen(container, results)
-            search_screen.grid(row=0, column=0, sticky="nsew")
-            
-            # Progressive UI updates for better perceived performance
-            self.after_idle(lambda: self.finalize_display(search_screen))
-            
+            # Pass a load_more callback to SearchScreen
+            def load_more_callback(cb):
+                self.load_more_results(cb, batch_size=10)
+            self.search_screen = SearchScreen(container, results, load_more_callback=load_more_callback)
+            self.search_screen.grid(row=0, column=0, sticky="nsew")
+            self.after_idle(lambda: self.finalize_display(self.search_screen))
         except Exception as e:
             print(f"Error displaying results: {e}")
             self.display_error("Error displaying results. Please try again.")
