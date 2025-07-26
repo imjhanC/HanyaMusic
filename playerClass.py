@@ -9,9 +9,13 @@ import yt_dlp
 import pygame
 
 class MusicPlayerContainer(ctk.CTkFrame):
-    def __init__(self, parent, song_data, *args, **kwargs):
+    def __init__(self, parent, song_data, playlist=None, current_index=0, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.song_data = song_data
+        self.playlist = playlist or [song_data]  # Default to current song if no playlist
+        self.current_index = current_index
+        self.shuffled_playlist = None  # Store shuffled playlist
+        self.shuffled_index = 0  # Current position in shuffled playlist
         self.is_playing = False
         self.current_time = 0
         self.total_duration = 0
@@ -23,6 +27,9 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.player = None
         self.media = None
         self.stream_url = None
+        
+        # Callback for song changes
+        self.on_song_change = None
         
         # Initialize pygame mixer for better audio control
         pygame.mixer.init()
@@ -41,10 +48,32 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Start progress update timer
         self._update_progress()
     
+    def set_playlist(self, playlist, current_index=0):
+        """Set the playlist and current song index"""
+        self.playlist = playlist
+        self.current_index = current_index
+        self.song_data = playlist[current_index]
+        self._update_song_info()
+        self._load_audio_stream()
+    
+    def set_on_song_change_callback(self, callback):
+        """Set callback function to be called when song changes"""
+        self.on_song_change = callback
+    
+    def _update_song_info(self):
+        """Update the displayed song information"""
+        self.song_title.configure(text=self.song_data.get('title', 'Unknown Title'))
+        self.artist_name.configure(text=self.song_data.get('uploader', 'Unknown Artist'))
+        self._load_thumbnail()
+    
     def _load_audio_stream(self):
         """Load the audio stream URL using yt-dlp"""
         def load_stream_async():
             try:
+                # Stop current playback if any
+                if self.player:
+                    self.player.stop()
+                
                 # Configure yt-dlp options for audio
                 ydl_opts = {
                     'format': 'bestaudio[abr>0]/bestaudio/best',
@@ -154,7 +183,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         
         # Progress bar
         self.progress_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        self.progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 30))
+        self.progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.progress_frame.grid_columnconfigure(0, weight=1)
         
         # Time labels
@@ -186,6 +215,14 @@ class MusicPlayerContainer(ctk.CTkFrame):
         buttons_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
         buttons_frame.grid(row=2, column=0, sticky="ew")
         
+        # Center the buttons by using a grid layout
+        buttons_frame.grid_columnconfigure(0, weight=1)
+        buttons_frame.grid_columnconfigure(1, weight=0)
+        buttons_frame.grid_columnconfigure(2, weight=0)
+        buttons_frame.grid_columnconfigure(3, weight=0)
+        buttons_frame.grid_columnconfigure(4, weight=0)
+        buttons_frame.grid_columnconfigure(5, weight=1)
+        
         # Previous button
         self.prev_btn = ctk.CTkButton(
             buttons_frame,
@@ -199,7 +236,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._previous_song
         )
-        self.prev_btn.pack(side="left", padx=(0, 10))
+        self.prev_btn.grid(row=0, column=1, padx=5)
         
         # Play/Pause button
         self.play_btn = ctk.CTkButton(
@@ -214,7 +251,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=20, weight="bold"),
             command=self._toggle_play_pause
         )
-        self.play_btn.pack(side="left", padx=10)
+        self.play_btn.grid(row=0, column=2, padx=10)
         
         # Next button
         self.next_btn = ctk.CTkButton(
@@ -229,7 +266,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._next_song
         )
-        self.next_btn.pack(side="left", padx=(10, 0))
+        self.next_btn.grid(row=0, column=3, padx=5)
         
         # Shuffle button
         self.shuffle_btn = ctk.CTkButton(
@@ -244,7 +281,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._toggle_shuffle
         )
-        self.shuffle_btn.pack(side="left", padx=(20, 0))
+        self.shuffle_btn.grid(row=0, column=4, padx=(20, 0))
     
     def _create_volume_section(self):
         # Volume container - horizontal layout
@@ -305,22 +342,114 @@ class MusicPlayerContainer(ctk.CTkFrame):
             self.play_btn.configure(text="⏸")
             self.is_playing = True
     
-    def _previous_song(self):
-        # Placeholder for previous song functionality
-        print("Previous song")
-        # You can implement playlist functionality here
-    
-    def _next_song(self):
-        # Placeholder for next song functionality
-        print("Next song")
-        # You can implement playlist functionality here
-    
     def _toggle_shuffle(self):
+        """Toggle shuffle mode and create shuffled playlist"""
+        import random
+        
         self.shuffle_enabled = not self.shuffle_enabled
+        
         if self.shuffle_enabled:
+            # Create shuffled playlist excluding current song
+            current_song = self.playlist[self.current_index]
+            other_songs = [song for i, song in enumerate(self.playlist) if i != self.current_index]
+            
+            # Shuffle the other songs
+            random.shuffle(other_songs)
+            
+            # Create new shuffled playlist: current song first, then shuffled others
+            self.shuffled_playlist = [current_song] + other_songs
+            self.shuffled_index = 0  # Start at current song
+            
             self.shuffle_btn.configure(fg_color="#1DB954", hover_color="#1ed760")
+            print("Shuffle enabled - playlist shuffled")
         else:
+            # Reset to original playlist
+            self.shuffled_playlist = None
+            self.shuffled_index = 0
             self.shuffle_btn.configure(fg_color="#333333", hover_color="#444444")
+            print("Shuffle disabled - using original playlist")
+
+    def _get_next_song_index(self):
+        """Get the next song index based on shuffle state"""
+        if self.shuffle_enabled and self.shuffled_playlist:
+            # Use shuffled playlist
+            if self.shuffled_index < len(self.shuffled_playlist) - 1:
+                return self.shuffled_index + 1
+            else:
+                return None  # End of shuffled playlist
+        else:
+            # Use original playlist
+            if self.current_index < len(self.playlist) - 1:
+                return self.current_index + 1
+            else:
+                return None  # End of original playlist
+
+    def _get_previous_song_index(self):
+        """Get the previous song index based on shuffle state"""
+        if self.shuffle_enabled and self.shuffled_playlist:
+            # Use shuffled playlist
+            if self.shuffled_index > 0:
+                return self.shuffled_index - 1
+            else:
+                return None  # Beginning of shuffled playlist
+        else:
+            # Use original playlist
+            if self.current_index > 0:
+                return self.current_index - 1
+            else:
+                return None  # Beginning of original playlist
+
+    def _next_song(self):
+        """Go to the next song in the playlist (shuffled or original)"""
+        next_index = self._get_next_song_index()
+        
+        if next_index is not None:
+            if self.shuffle_enabled and self.shuffled_playlist:
+                # Use shuffled playlist
+                self.shuffled_index = next_index
+                self.song_data = self.shuffled_playlist[self.shuffled_index]
+                # Find corresponding index in original playlist for callback
+                original_index = self.playlist.index(self.song_data)
+                self.current_index = original_index
+            else:
+                # Use original playlist
+                self.current_index = next_index
+                self.song_data = self.playlist[self.current_index]
+            
+            self._update_song_info()
+            self._load_audio_stream()
+            
+            # Call callback if set
+            if self.on_song_change:
+                self.on_song_change(self.current_index, self.song_data)
+        else:
+            print("Already at the last song")
+
+    def _previous_song(self):
+        """Go to the previous song in the playlist (shuffled or original)"""
+        prev_index = self._get_previous_song_index()
+        
+        if prev_index is not None:
+            if self.shuffle_enabled and self.shuffled_playlist:
+                # Use shuffled playlist
+                self.shuffled_index = prev_index
+                self.song_data = self.shuffled_playlist[self.shuffled_index]
+                # Find corresponding index in original playlist for callback
+                original_index = self.playlist.index(self.song_data)
+                self.current_index = original_index
+            else:
+                # Use original playlist
+                self.current_index = prev_index
+                self.song_data = self.playlist[self.current_index]
+            
+            self._update_song_info()
+            self._load_audio_stream()
+            
+            # Call callback if set
+            if self.on_song_change:
+                self.on_song_change(self.current_index, self.song_data)
+        else:
+            print("Already at the first song")
     
     def _on_volume_change(self, value):
         self.volume = value
@@ -359,6 +488,14 @@ class MusicPlayerContainer(ctk.CTkFrame):
                         self.progress_bar.set(0)
                         self.current_time_label.configure(text="0:00")
                         
+                        # Auto-play next song if available
+                        next_index = self._get_next_song_index()
+                        if next_index is not None:
+                            print("Song ended, playing next song...")
+                            self._next_song()
+                        else:
+                            print("Song ended, reached end of playlist")
+                            
             except Exception as e:
                 print(f"Error updating progress: {e}")
         
@@ -378,9 +515,41 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Calculate seek time
         seek_time = int(seek_percentage * self.total_duration * 1000)  # Convert to milliseconds
         
-        # Seek to the position
-        self.player.set_time(seek_time)
-        self.current_time = seek_percentage * self.total_duration
+        # Store current play state
+        was_playing = self.is_playing
+        
+        # If paused, temporarily play to seek, then pause again
+        if not was_playing:
+            self.player.play()
+            # Give VLC a moment to start
+            self.after(50, lambda: self._perform_seek_and_pause(seek_time, seek_percentage))
+        else:
+            # If already playing, seek directly
+            self.player.set_time(seek_time)
+            self.current_time = seek_percentage * self.total_duration
+
+    def _perform_seek_and_pause(self, seek_time, seek_percentage):
+        """Helper method to seek when paused and then pause again"""
+        try:
+            # Perform the seek
+            self.player.set_time(seek_time)
+            self.current_time = seek_percentage * self.total_duration
+            
+            # Pause again after seeking
+            self.player.pause()
+            
+            # Update the progress bar to show the new position
+            if self.total_duration > 0:
+                progress = self.current_time / self.total_duration
+                self.progress_bar.set(progress)
+            
+            # Update time labels
+            current_min = int(self.current_time) // 60
+            current_sec = int(self.current_time) % 60
+            self.current_time_label.configure(text=f"{current_min}:{current_sec:02d}")
+            
+        except Exception as e:
+            print(f"Error during seek: {e}")
     
     def destroy(self):
         """Clean up VLC resources when destroying the player"""

@@ -91,8 +91,22 @@ class SearchScreen(ctk.CTkFrame):
         if self.music_player:
             self.music_player.destroy()
         
-        # Create new music player
-        self.music_player = MusicPlayerContainer(self, song_data)
+        # Create playlist from current results
+        playlist = self.results
+        
+        # Find the index of the current song
+        current_index = 0
+        for i, result in enumerate(playlist):
+            if result.get('videoId') == song_data.get('videoId'):
+                current_index = i
+                break
+        
+        # Create new music player with playlist
+        self.music_player = MusicPlayerContainer(self, song_data, playlist, current_index)
+        
+        # Set callback for song changes
+        self.music_player.set_on_song_change_callback(self._on_song_change)
+        
         self.music_player.pack(side="bottom", fill="x", padx=5, pady=5)
         
         # Update canvas scroll region to account for player
@@ -312,3 +326,8 @@ class SearchScreen(ctk.CTkFrame):
         if hasattr(self, '_video_ids'):
             return list(self._video_ids)
         return []
+
+    def _on_song_change(self, index, song_data):
+        """Callback when song changes in the player"""
+        print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {index})")
+        # You can add additional logic here, like updating the UI to highlight the current song
