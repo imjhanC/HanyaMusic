@@ -93,7 +93,7 @@ class SearchScreen(ctk.CTkFrame):
         
         # Create new music player
         self.music_player = MusicPlayerContainer(self, song_data)
-        self.music_player.pack(side="bottom", fill="x", padx=10, pady=10)
+        self.music_player.pack(side="bottom", fill="x", padx=5, pady=5)
         
         # Update canvas scroll region to account for player
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

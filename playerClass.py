@@ -28,7 +28,9 @@ class MusicPlayerContainer(ctk.CTkFrame):
         pygame.mixer.init()
         
         # Configure the player container
-        self.configure(fg_color="#222222", corner_radius=15, height=120)
+        self.configure(fg_color="#000000")
+        self.grid_propagate(False)  # Prevent the frame from shrinking to fit content
+        self.configure(height=240)  # Set explicit height
         
         # Create the player layout
         self._create_player_layout()
@@ -105,13 +107,13 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Controls section (center)
         self._create_controls_section()
         
-        # Volume section (right)
+        # Volume section (right) - horizontal layout
         self._create_volume_section()
     
     def _create_thumbnail_section(self):
         # Thumbnail container
-        thumb_frame = ctk.CTkFrame(self, fg_color="transparent", width=80, height=80)
-        thumb_frame.grid(row=0, column=0, padx=15, pady=20, sticky="nsw")
+        thumb_frame = ctk.CTkFrame(self, fg_color="transparent", width=100, height=100)
+        thumb_frame.grid(row=0, column=0, padx=5, pady=10, sticky="nsw")
         thumb_frame.grid_propagate(False)
         
         # Thumbnail label
@@ -152,7 +154,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         
         # Progress bar
         self.progress_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        self.progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.progress_frame.grid(row=1, column=0, sticky="ew", pady=(0, 30))
         self.progress_frame.grid_columnconfigure(0, weight=1)
         
         # Time labels
@@ -245,37 +247,37 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.shuffle_btn.pack(side="left", padx=(20, 0))
     
     def _create_volume_section(self):
-        # Volume container
+        # Volume container - horizontal layout
         volume_frame = ctk.CTkFrame(self, fg_color="transparent")
         volume_frame.grid(row=0, column=2, padx=15, pady=20, sticky="nse")
         
-        # Volume icon
+        # Volume icon and slider in horizontal layout
         volume_icon = ctk.CTkLabel(
             volume_frame,
             text="🔊",
             font=ctk.CTkFont(size=16)
         )
-        volume_icon.pack(pady=(0, 5))
+        volume_icon.pack(side="left", padx=(0, 10))
         
-        # Volume slider
+        # Volume slider - horizontal orientation
         self.volume_slider = ctk.CTkSlider(
             volume_frame,
             from_=0,
             to=1,
             number_of_steps=100,
-            orientation="vertical",
-            height=80,
+            orientation="horizontal",
+            width=100,
             command=self._on_volume_change
         )
         self.volume_slider.set(self.volume)
-        self.volume_slider.pack()
+        self.volume_slider.pack(side="left")
     
     def _load_thumbnail(self):
         def load_image_async():
             try:
                 response = requests.get(self.song_data['thumbnail_url'], timeout=5)
                 img = Image.open(BytesIO(response.content))
-                img.thumbnail((80, 80), Image.Resampling.LANCZOS)
+                img.thumbnail((200, 200), Image.Resampling.LANCZOS)  # Increased size
                 tk_image = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                 def update_image():
                     if self.thumbnail_label.winfo_exists():
