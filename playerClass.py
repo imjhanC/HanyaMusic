@@ -19,7 +19,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.is_playing = False
         self.current_time = 0
         self.total_duration = 0
-        self.volume = 0.7
+        self.volume = 1.0
         self.shuffle_enabled = False
         
         # VLC and audio setup
@@ -135,6 +135,26 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Main layout with 3 columns: thumbnail, controls, volume
         self.grid_columnconfigure(1, weight=1)
         
+        # Create a header frame for the close button
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent", height=30)
+        self.header_frame.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self.header_frame.grid_propagate(False)
+        
+        # Add close button to header frame (aligned to right)
+        self.close_btn = ctk.CTkButton(
+            self.header_frame,
+            text="✖",
+            width=30,
+            height=30,
+            corner_radius=15,
+            fg_color="transparent",
+            hover_color="#333333",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16),
+            command=self._close_player
+        )
+        self.close_btn.pack(side="right", padx=5, pady=5)
+        
         # Thumbnail section (left)
         self._create_thumbnail_section()
         
@@ -147,7 +167,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
     def _create_thumbnail_section(self):
         # Thumbnail container
         thumb_frame = ctk.CTkFrame(self, fg_color="transparent", width=100, height=100)
-        thumb_frame.grid(row=0, column=0, padx=5, pady=10, sticky="nsw")
+        thumb_frame.grid(row=1, column=0, padx=5, pady=10, sticky="nsw")
         thumb_frame.grid_propagate(False)
         
         # Thumbnail label
@@ -160,7 +180,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
     def _create_controls_section(self):
         # Controls container
         controls_frame = ctk.CTkFrame(self, fg_color="transparent")
-        controls_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=10)
+        controls_frame.grid(row=1, column=1, sticky="nsew", padx=20, pady=10)
         controls_frame.grid_columnconfigure(0, weight=1)
         
         # Song info
@@ -291,7 +311,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
     def _create_volume_section(self):
         # Volume container - horizontal layout
         volume_frame = ctk.CTkFrame(self, fg_color="transparent")
-        volume_frame.grid(row=0, column=2, padx=15, pady=20, sticky="nse")
+        volume_frame.grid(row=1, column=2, padx=15, pady=20, sticky="nse")
         
         # Volume icon and slider in horizontal layout
         volume_icon = ctk.CTkLabel(
@@ -314,21 +334,6 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.volume_slider.set(self.volume)
         self.volume_slider.pack(side="left")
 
-        # Close button
-        self.close_btn = ctk.CTkButton(
-            volume_frame,
-            text="✖",
-            width=30,
-            height=30,
-            corner_radius=15,
-            fg_color="#FF0000",
-            hover_color="#FF3333",
-            text_color="#FFFFFF",
-            font=ctk.CTkFont(size=16),
-            command=self._close_player
-        )
-        self.close_btn.pack(side="right", padx=(10, 0))
-    
     def _load_thumbnail(self):
         def load_image_async():
             try:

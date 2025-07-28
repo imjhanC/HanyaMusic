@@ -305,6 +305,15 @@ class App(ctk.CTk):
                 uploader = entry.get('uploader', 'Unknown')
                 duration = entry.get('duration')
                 view_count = entry.get('view_count')
+                
+                # Skip if title and uploader are the same (after case-insensitive comparison)
+                if str(title).strip().lower() == str(uploader).strip().lower():
+                    continue
+                    
+                # Skip if duration is 0 or invalid
+                if not duration or duration <= 0:
+                    continue
+                    
                 result = {
                     'title': str(title).strip()[:100],
                     'thumbnail_url': f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
