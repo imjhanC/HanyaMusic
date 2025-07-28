@@ -21,6 +21,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.total_duration = 0
         self.volume = 1.0
         self.shuffle_enabled = False
+        self.repeat_enabled = False  # Repeat state
         
         # VLC and audio setup
         self.vlc_instance = None
@@ -246,8 +247,22 @@ class MusicPlayerContainer(ctk.CTkFrame):
         buttons_frame.grid_columnconfigure(2, weight=0)
         buttons_frame.grid_columnconfigure(3, weight=0)
         buttons_frame.grid_columnconfigure(4, weight=0)
-        buttons_frame.grid_columnconfigure(5, weight=1)
-        
+        buttons_frame.grid_columnconfigure(5, weight=0)
+        buttons_frame.grid_columnconfigure(6, weight=1)
+        # Repeat button (beside previous)
+        self.repeat_btn = ctk.CTkButton(
+            buttons_frame,
+            text="🔁",
+            width=40,
+            height=40,
+            corner_radius=20,
+            fg_color="#333333",
+            hover_color="#444444",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16),
+            command=self._toggle_repeat
+        )
+        self.repeat_btn.grid(row=0, column=1, padx=5)
         # Previous button
         self.prev_btn = ctk.CTkButton(
             buttons_frame,
@@ -261,8 +276,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._previous_song
         )
-        self.prev_btn.grid(row=0, column=1, padx=5)
-        
+        self.prev_btn.grid(row=0, column=2, padx=5)
         # Play/Pause button
         self.play_btn = ctk.CTkButton(
             buttons_frame,
@@ -276,8 +290,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=20, weight="bold"),
             command=self._toggle_play_pause
         )
-        self.play_btn.grid(row=0, column=2, padx=10)
-        
+        self.play_btn.grid(row=0, column=3, padx=10)
         # Next button
         self.next_btn = ctk.CTkButton(
             buttons_frame,
@@ -291,8 +304,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._next_song
         )
-        self.next_btn.grid(row=0, column=3, padx=5)
-        
+        self.next_btn.grid(row=0, column=4, padx=5)
         # Shuffle button
         self.shuffle_btn = ctk.CTkButton(
             buttons_frame,
@@ -306,7 +318,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             font=ctk.CTkFont(size=16),
             command=self._toggle_shuffle
         )
-        self.shuffle_btn.grid(row=0, column=4, padx=(20, 0))
+        self.shuffle_btn.grid(row=0, column=5, padx=(20, 0))
     
     def _create_volume_section(self):
         # Volume container - horizontal layout
@@ -393,6 +405,13 @@ class MusicPlayerContainer(ctk.CTkFrame):
             self.shuffled_index = 0
             self.shuffle_btn.configure(fg_color="#333333", hover_color="#444444")
             print("Shuffle disabled - using original playlist")
+
+    def _toggle_repeat(self):
+        self.repeat_enabled = not self.repeat_enabled
+        if self.repeat_enabled:
+            self.repeat_btn.configure(fg_color="#1DB954", hover_color="#1ed760")
+        else:
+            self.repeat_btn.configure(fg_color="#333333", hover_color="#444444")
 
     def _get_next_song_index(self):
         """Get the next song index based on shuffle state"""
@@ -513,13 +532,18 @@ class MusicPlayerContainer(ctk.CTkFrame):
                         self.progress_bar.set(0)
                         self.current_time_label.configure(text="0:00")
                         
-                        # Auto-play next song if available
-                        next_index = self._get_next_song_index()
-                        if next_index is not None:
-                            print("Song ended, playing next song...")
-                            self._next_song()
+                        # Repeat logic
+                        if self.repeat_enabled:
+                            print("Repeat enabled - replaying current song...")
+                            self._load_audio_stream()
                         else:
-                            print("Song ended, reached end of playlist")
+                            # Auto-play next song if available
+                            next_index = self._get_next_song_index()
+                            if next_index is not None:
+                                print("Song ended, playing next song...")
+                                self._next_song()
+                            else:
+                                print("Song ended, reached end of playlist")
                             
             except Exception as e:
                 print(f"Error updating progress: {e}")
