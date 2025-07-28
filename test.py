@@ -28,7 +28,8 @@ class App(ctk.CTk):
         
         # Configure window resizing
         self.minsize(800, 600)  # Set minimum window size
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)  # Main content area
+        self.grid_rowconfigure(1, weight=0)  # Music player area (fixed height)
         self.grid_columnconfigure(0, weight=1)
         
         # Disable window resizing animation on Windows
@@ -56,6 +57,11 @@ class App(ctk.CTk):
         self.duration_cache = {}
         self.view_cache = {}
 
+        # Music player state
+        self.music_player = None
+        self.current_playlist = []
+        self.current_song_index = 0
+
         # Configure yt-dlp options - optimized for speed
         self.ydl_opts = {
             'quiet': True,
@@ -74,9 +80,21 @@ class App(ctk.CTk):
         # Layout containers
         self.create_main_area()
         self.create_topbar()
+        self.create_music_player_area()
         
         # Bind window events
         self.bind('<Configure>', self._on_window_configure)
+
+    def create_music_player_area(self):
+        """Create the area at the bottom for the music player"""
+        # Create a frame at the bottom for the music player - initially hidden
+        self.music_player_frame = ctk.CTkFrame(self, fg_color="transparent", height=240)
+        self.music_player_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
+        self.music_player_frame.grid_propagate(False)  # Prevent resizing
+        self.music_player_frame.grid_columnconfigure(0, weight=1)
+        
+        # Initially hide the music player frame
+        self.music_player_frame.grid_remove()
 
     def create_topbar(self):
         search_font = ctk.CTkFont(family="Helvetica", size=18)
@@ -153,14 +171,14 @@ class App(ctk.CTk):
 
     def create_main_area(self):
         self.main_frame = ctk.CTkFrame(self, fg_color="black")
-        self.main_frame.place(x=0, y=60, relwidth=1, relheight=1, anchor="nw")
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
     def show_main_frame(self):
         # Clear main_frame and recreate it
         for widget in self.main_frame.winfo_children():
             widget.destroy()
         self.main_frame = ctk.CTkFrame(self, fg_color="black")
-        self.main_frame.place(x=0, y=60, relwidth=1, relheight=1, anchor="nw")
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
     def on_search_typing(self, event=None):
         # Cancel any pending search
@@ -501,11 +519,58 @@ class App(ctk.CTk):
                 self.load_more_results(cb, batch_size=10)
             self.search_screen = SearchScreen(container, results, load_more_callback=load_more_callback)
             self.search_screen.grid(row=0, column=0, sticky="nsew")
+            # Set the song selection callback
+            self.search_screen.set_song_selection_callback(self.on_song_selected)
             self.after_idle(lambda: self.finalize_display(self.search_screen))
         except Exception as e:
             print(f"Error displaying results: {e}")
             self.display_error("Error displaying results. Please try again.")
     
+    def on_song_selected(self, song_data, playlist, current_index):
+        """Called when a song is selected from the search results"""
+        # Update the current playlist and song index
+        self.current_playlist = playlist
+        self.current_song_index = current_index
+        
+        # Show the music player frame
+        self.music_player_frame.grid()
+        
+        # Create or update the music player
+        if self.music_player:
+            # Update existing player with new song
+            self.music_player.set_playlist(playlist, current_index)
+        else:
+            # Create new music player
+            from playerClass import MusicPlayerContainer
+            self.music_player = MusicPlayerContainer(self.music_player_frame, song_data, playlist, current_index)
+            self.music_player.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+            
+            # Set callback for song changes
+            self.music_player.set_on_song_change_callback(self.on_song_change)
+            # Set callback for when player is closed
+            self.music_player.set_on_close_callback(self.hide_music_player)
+        
+        # Update the layout to accommodate the music player
+        self.update_idletasks()
+        
+        print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {current_index})")
+    
+    def on_song_change(self, index, song_data):
+        """Callback when song changes in the player"""
+        self.current_song_index = index
+        print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {index})")
+        # You can add additional logic here, like updating the UI to highlight the current song
+    
+    def hide_music_player(self):
+        """Hide the music player frame"""
+        if self.music_player:
+            self.music_player.destroy()
+            self.music_player = None
+        self.music_player_frame.grid_remove()
+        # Update the layout after hiding the music player
+        self.update_idletasks()
+        print("Music player hidden")
+
     def finalize_display(self, search_screen):
         """Finalize display setup after UI is rendered"""
         try:

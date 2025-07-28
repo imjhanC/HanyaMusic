@@ -30,6 +30,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         
         # Callback for song changes
         self.on_song_change = None
+        self.on_close = None  # Callback for when player is closed
         
         # Initialize pygame mixer for better audio control
         pygame.mixer.init()
@@ -59,6 +60,10 @@ class MusicPlayerContainer(ctk.CTkFrame):
     def set_on_song_change_callback(self, callback):
         """Set callback function to be called when song changes"""
         self.on_song_change = callback
+    
+    def set_on_close_callback(self, callback):
+        """Set callback function to be called when player is closed"""
+        self.on_close = callback
     
     def _update_song_info(self):
         """Update the displayed song information"""
@@ -308,6 +313,21 @@ class MusicPlayerContainer(ctk.CTkFrame):
         )
         self.volume_slider.set(self.volume)
         self.volume_slider.pack(side="left")
+
+        # Close button
+        self.close_btn = ctk.CTkButton(
+            volume_frame,
+            text="✖",
+            width=30,
+            height=30,
+            corner_radius=15,
+            fg_color="#FF0000",
+            hover_color="#FF3333",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16),
+            command=self._close_player
+        )
+        self.close_btn.pack(side="right", padx=(10, 0))
     
     def _load_thumbnail(self):
         def load_image_async():
@@ -550,6 +570,12 @@ class MusicPlayerContainer(ctk.CTkFrame):
             
         except Exception as e:
             print(f"Error during seek: {e}")
+    
+    def _close_player(self):
+        """Close the player and call the on_close callback"""
+        if self.on_close:
+            self.on_close()
+        self.destroy()
     
     def destroy(self):
         """Clean up VLC resources when destroying the player"""

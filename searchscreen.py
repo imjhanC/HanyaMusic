@@ -18,8 +18,8 @@ class SearchScreen(ctk.CTkFrame):
         self._resize_in_progress = False
         self._resize_after_id = None
         
-        # Music player container
-        self.music_player = None
+        # Song selection callback
+        self.song_selection_callback = None
         
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -86,31 +86,22 @@ class SearchScreen(ctk.CTkFrame):
         self.cards = []
         self.create_results_grid()
     
-    def _show_music_player(self, song_data):
-        # Remove existing player if any
-        if self.music_player:
-            self.music_player.destroy()
-        
-        # Create playlist from current results
-        playlist = self.results
-        
-        # Find the index of the current song
-        current_index = 0
-        for i, result in enumerate(playlist):
-            if result.get('videoId') == song_data.get('videoId'):
-                current_index = i
-                break
-        
-        # Create new music player with playlist
-        self.music_player = MusicPlayerContainer(self, song_data, playlist, current_index)
-        
-        # Set callback for song changes
-        self.music_player.set_on_song_change_callback(self._on_song_change)
-        
-        self.music_player.pack(side="bottom", fill="x", padx=5, pady=5)
-        
-        # Update canvas scroll region to account for player
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    def set_song_selection_callback(self, callback):
+        """Set callback function to be called when a song is selected"""
+        self.song_selection_callback = callback
+    
+    def _on_song_selected(self, song_data):
+        """Called when a song is selected from the search results"""
+        if self.song_selection_callback:
+            # Find the index of the selected song in the current results
+            current_index = 0
+            for i, result in enumerate(self.results):
+                if result.get('videoId') == song_data.get('videoId'):
+                    current_index = i
+                    break
+            
+            # Call the callback with song data, playlist, and current index
+            self.song_selection_callback(song_data, self.results, current_index)
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
@@ -292,7 +283,7 @@ class SearchScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=20, weight="bold"),
             border_width=0,
             border_spacing=0,
-            command=lambda: self._show_music_player(result)
+            command=lambda: self._on_song_selected(result)
         )
         play_btn.grid(row=0, column=2, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
@@ -326,8 +317,3 @@ class SearchScreen(ctk.CTkFrame):
         if hasattr(self, '_video_ids'):
             return list(self._video_ids)
         return []
-
-    def _on_song_change(self, index, song_data):
-        """Callback when song changes in the player"""
-        print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {index})")
-        # You can add additional logic here, like updating the UI to highlight the current song
