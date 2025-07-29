@@ -9,6 +9,7 @@ import concurrent.futures
 import json
 from functools import lru_cache
 import math
+from LoginClass import LoginWindow
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -76,6 +77,9 @@ class App(ctk.CTk):
             'socket_timeout': 10,  # Add timeout
             'retries': 1,  # Reduce retries
         }
+
+        # User state
+        self.current_user = None
 
         # Layout containers
         self.create_main_area()
@@ -222,9 +226,26 @@ class App(ctk.CTk):
     
     def on_login_clicked(self):
         """Handle login menu item click"""
-        print("Login clicked")
         self.hide_user_menu()
-        # Add your login logic here
+        # Create and show login window
+        login_window = LoginWindow(self, on_login_success=self.on_login_success)
+        # Set focus to the login window
+        login_window.focus_force()
+    
+    def on_login_success(self, username):
+        """Handle successful login"""
+        self.current_user = username
+        print(f"Successfully logged in as {username}")
+        # Update UI to show logged in state if needed
+        # For example, you could update the user icon or show the username
+        
+        # Example: Update user icon to show logged in state
+        try:
+            # You could load a different icon for logged-in users
+            logged_in_icon = self.load_user_icon()  # Or load a different icon
+            self.user_icon.configure(image=logged_in_icon)
+        except Exception as e:
+            print(f"Error updating user icon: {e}")
     
     def on_settings_clicked(self):
         """Handle settings menu item click"""
