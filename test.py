@@ -120,7 +120,14 @@ class App(ctk.CTk):
             corner_radius=10
         )
         self.searchbar.place(x=48, y=2)
-        self.searchbar.bind('<KeyRelease>', self.on_search_typing)  
+        
+        # Bind focus in/out events
+        self.searchbar.bind('<FocusIn>', self.on_search_focus_in)
+        self.searchbar.bind('<FocusOut>', self.on_search_focus_out)
+        
+        # Initially disable search typing handler
+        self.search_enabled = False
+        
         self.loading_label = None
 
         self.user_icon = ctk.CTkLabel(self, text="", image=self.load_user_icon(), width=40, height=40)
@@ -180,7 +187,23 @@ class App(ctk.CTk):
         self.main_frame = ctk.CTkFrame(self, fg_color="black")
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
+    def on_search_focus_in(self, event):
+        """Called when search bar gets focus"""
+        self.search_enabled = True
+        # Re-bind the key release event when search bar is focused
+        self.searchbar.bind('<KeyRelease>', self.on_search_typing)
+        
+    def on_search_focus_out(self, event):
+        """Called when search bar loses focus"""
+        self.search_enabled = False
+        # Unbind the key release event when search bar loses focus
+        self.searchbar.unbind('<KeyRelease>')
+
     def on_search_typing(self, event=None):
+        """Handle search typing - only called when search bar is focused"""
+        if not self.search_enabled:
+            return
+            
         # Cancel any pending search
         if self.after_id:
             self.after_cancel(self.after_id)
@@ -202,7 +225,7 @@ class App(ctk.CTk):
         if len(query) < 2:
             return
             
-        # Show loading immediately
+        # Show loading state
         self.show_loading()
         
         # Schedule search with delay
@@ -511,29 +534,25 @@ class App(ctk.CTk):
         error_label.pack(pady=40)
 
     def display_results(self, results):
-        """Optimized results display with progressive loading and infinite scroll support."""
-        # Clear the main frame
+        """Display search results"""
+        # Clear previous results
         for widget in self.main_frame.winfo_children():
             widget.destroy()
-        if not results:
-            self.display_error("No results found. Try a different search term.")
-            return
-        try:
-            container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-            container.pack(fill="both", expand=True)
-            container.grid_rowconfigure(0, weight=1)
-            container.grid_columnconfigure(0, weight=1)
-            # Pass a load_more callback to SearchScreen
-            def load_more_callback(cb):
-                self.load_more_results(cb, batch_size=10)
-            self.search_screen = SearchScreen(container, results, load_more_callback=load_more_callback)
-            self.search_screen.grid(row=0, column=0, sticky="nsew")
-            # Set the song selection callback
-            self.search_screen.set_song_selection_callback(self.on_song_selected)
-            self.after_idle(lambda: self.finalize_display(self.search_screen))
-        except Exception as e:
-            print(f"Error displaying results: {e}")
-            self.display_error("Error displaying results. Please try again.")
+            
+        # Create search results screen
+        search_screen = SearchScreen(self.main_frame, results, self.load_more_results)
+        search_screen.pack(fill="both", expand=True)
+        
+        # Set song selection callback
+        search_screen.set_song_selection_callback(self.on_song_selected)
+        
+        # Remove focus from search bar and stop listening to keyboard
+        self.focus_set()  # Move focus to main window
+        self.searchbar.unbind('<KeyRelease>')
+        self.search_enabled = False
+        
+        # Finalize display after a short delay to ensure everything is rendered
+        self.after(100, lambda: self.finalize_display(search_screen))
     
     def on_song_selected(self, song_data, playlist, current_index):
         """Called when a song is selected from the search results"""
