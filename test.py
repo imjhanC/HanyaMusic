@@ -130,8 +130,53 @@ class App(ctk.CTk):
         
         self.loading_label = None
 
-        self.user_icon = ctk.CTkLabel(self, text="", image=self.load_user_icon(), width=40, height=40)
+        # User icon with dropdown menu
+        self.user_icon = ctk.CTkButton(
+            self, 
+            text="", 
+            image=self.load_user_icon(), 
+            width=40, 
+            height=40,
+            fg_color="transparent",
+            hover_color="#333333",
+            command=self.toggle_user_menu
+        )
         self.user_icon.place(relx=0.95, y=10, anchor="ne")
+        
+        # Create user menu (initially hidden)
+        self.user_menu = ctk.CTkFrame(
+            self,
+            width=150,
+            corner_radius=5,
+            fg_color="#282828",
+            border_width=1,
+            border_color="#444444"
+        )
+        self.user_menu_visible = False
+        
+        # Menu items
+        menu_items = [
+            ("Log In", self.on_login_clicked),
+            ("Settings", self.on_settings_clicked),
+            ("About", self.on_about_clicked)
+        ]
+        
+        for i, (text, command) in enumerate(menu_items):
+            btn = ctk.CTkButton(
+                self.user_menu,
+                text=text,
+                font=ctk.CTkFont(size=14),
+                fg_color="transparent",
+                hover_color="#404040",
+                anchor="w",
+                command=command,
+                height=40
+            )
+            btn.pack(fill="x", padx=5, pady=2 if i < len(menu_items) - 1 else 5)
+            
+            # Add separator between items
+            if i < len(menu_items) - 1:
+                ctk.CTkFrame(self.user_menu, height=1, fg_color="#444444").pack(fill="x", padx=5)
 
         # 'X' Button to clear input
         self.clear_button = ctk.CTkButton(
@@ -144,6 +189,65 @@ class App(ctk.CTk):
             command=self.clear_searchbar
         )
         self.clear_button.place(x=570, rely=0.5, anchor="center")
+        
+        # Bind click outside to close menu
+        self.bind("<Button-1>", self.on_window_click)
+
+    def toggle_user_menu(self):
+        """Toggle the visibility of the user menu"""
+        if self.user_menu_visible:
+            self.hide_user_menu()
+        else:
+            self.show_user_menu()
+    
+    def show_user_menu(self):
+        """Show the user menu below the user icon"""
+        if not self.user_menu_visible:
+            self.update_user_menu_position()
+            self.user_menu_visible = True
+    
+    def hide_user_menu(self):
+        """Hide the user menu"""
+        if self.user_menu_visible:
+            self.user_menu.place_forget()
+            self.user_menu_visible = False
+    
+    def on_window_click(self, event):
+        """Handle clicks outside the user menu to close it"""
+        if self.user_menu_visible:
+            # Check if click was outside both user icon and menu
+            if not (self.user_icon.winfo_containing(event.x_root, event.y_root) or 
+                   self.user_menu.winfo_containing(event.x_root, event.y_root)):
+                self.hide_user_menu()
+    
+    def on_login_clicked(self):
+        """Handle login menu item click"""
+        print("Login clicked")
+        self.hide_user_menu()
+        # Add your login logic here
+    
+    def on_settings_clicked(self):
+        """Handle settings menu item click"""
+        print("Settings clicked")
+        self.hide_user_menu()
+        # Add your settings logic here
+    
+    def on_about_clicked(self):
+        """Handle about menu item click"""
+        print("About clicked")
+        self.hide_user_menu()
+        # Add your about dialog here
+
+    def create_main_area(self):
+        self.main_frame = ctk.CTkFrame(self, fg_color="black")
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
+
+    def show_main_frame(self):
+        # Clear main_frame and recreate it
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        self.main_frame = ctk.CTkFrame(self, fg_color="black")
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
     def clear_searchbar(self):
         self.searchbar.delete(0, 'end')
@@ -175,17 +279,6 @@ class App(ctk.CTk):
         except Exception as e:
             print(f"Could not load user icon: {e}")
             return None
-
-    def create_main_area(self):
-        self.main_frame = ctk.CTkFrame(self, fg_color="black")
-        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
-
-    def show_main_frame(self):
-        # Clear main_frame and recreate it
-        for widget in self.main_frame.winfo_children():
-            widget.destroy()
-        self.main_frame = ctk.CTkFrame(self, fg_color="black")
-        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
     def on_search_focus_in(self, event):
         """Called when search bar gets focus"""
@@ -613,35 +706,33 @@ class App(ctk.CTk):
             print(f"Error finalizing display: {e}")
 
     def _on_window_configure(self, event):
-        """Handle window resize with debounce"""
-        if event.widget != self:  # Only process main window resize
-            return
-            
-        if self._resize_after_id:
-            self.after_cancel(self._resize_after_id)
-            
-        self._resize_after_id = self.after(200, self._process_resize)
+        """Handle window resize events with debounce"""
+        if not self._resize_in_progress:
+            self._resize_in_progress = True
+            if self._resize_after_id:
+                self.after_cancel(self._resize_after_id)
+            self._resize_after_id = self.after(100, self._process_resize)
     
     def _process_resize(self):
-        """Process resize after a short delay to prevent excessive updates"""
-        if self._resize_in_progress:
-            return
+        """Process window resize - update menu position if visible"""
+        self._resize_in_progress = False
+        if self.user_menu_visible:
+            self.update_user_menu_position()
+    
+    def update_user_menu_position(self):
+        """Update the position of the user menu to follow the user icon"""
+        if hasattr(self, 'user_icon') and hasattr(self, 'user_menu'):
+            # Get position of user icon relative to the window
+            x = self.user_icon.winfo_x()
+            y = self.user_icon.winfo_y() + self.user_icon.winfo_height()
             
-        self._resize_in_progress = True
-        try:
-            # Update any layout that needs to respond to window size
-            if hasattr(self, 'search_frame'):
-                # Update search bar width
-                window_width = self.winfo_width()
-                search_width = min(600, max(300, window_width - 200))  # Keep search bar between 300-600px
-                self.search_frame.configure(width=search_width)
-                
-                # Update search bar position
-                if hasattr(self, 'search_bar'):
-                    self.search_bar.configure(width=search_width - 40)  # Account for padding
-        finally:
-            self._resize_after_id = None
-            self._resize_in_progress = False
+            # Calculate position to align menu with right edge of window
+            menu_width = self.user_menu.winfo_reqwidth()
+            menu_x = x - menu_width + self.user_icon.winfo_width()
+            
+            # Position the menu
+            self.user_menu.place(x=menu_x, y=y + 5)
+            self.user_menu.lift()
 
     def __del__(self):
         """Cleanup when app is destroyed"""
