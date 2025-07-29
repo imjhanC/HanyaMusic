@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from PIL import Image, ImageTk
 import os
+from RegisterClass import RegisterPage
 
 class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent, on_login_success=None):
@@ -49,7 +50,7 @@ class LoginWindow(ctk.CTkToplevel):
         
         self.username_entry = ctk.CTkEntry(
             self.container,
-            placeholder_text="Enter your username",
+            placeholder_text="Enter your username or email",
             width=400,
             height=45,
             font=ctk.CTkFont(size=14)
@@ -123,6 +124,14 @@ class LoginWindow(ctk.CTkToplevel):
         # Bind Enter key to login
         self.password_entry.bind('<Return>', lambda e: self.attempt_login())
         
+        # Center the window on screen
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f'+{x}+{y}')
+        
     def attempt_login(self):
         """Handle login attempt"""
         username = self.username_entry.get().strip()
@@ -133,18 +142,16 @@ class LoginWindow(ctk.CTkToplevel):
             self.show_error("Please enter both username and password")
             return
             
-        # Here you would typically validate credentials with your backend
-        # For now, we'll simulate a successful login
-        if self.validate_credentials(username, password):
-            self.on_login_success(username)
+        # Use FirebaseManager to validate credentials
+        from FirebaseClass import FirebaseManager
+        firebase = FirebaseManager()
+        
+        if firebase.verify_credentials(username, password):
+            if self.on_login_success:
+                self.on_login_success(username)
             self.destroy()
         else:
             self.show_error("Invalid username or password")
-    
-    def validate_credentials(self, username, password):
-        """Validate user credentials (placeholder - implement your own validation)"""
-        # TODO: Replace with actual authentication logic
-        return True  # For demo purposes
     
     def show_error(self, message):
         """Display error message"""
@@ -153,8 +160,27 @@ class LoginWindow(ctk.CTkToplevel):
         self.after(5000, lambda: self.error_label.configure(text=""))
     
     def on_signup_clicked(self):
-        """Handle signup link click"""
-        # TODO: Implement signup functionality
-        print("Sign up clicked")
-        # You can open a signup window here
-        self.show_error("Sign up functionality coming soon!")
+        """Handle signup link click - open registration window"""
+        # Hide the login window while registration is open
+        self.withdraw()
+        
+        # Create and show registration window
+        register_window = RegisterPage(switch_to_login_callback=self.on_register_closed)
+        
+        # Center the registration window
+        register_window.update_idletasks()
+        width = register_window.winfo_width()
+        height = register_window.winfo_height()
+        x = (register_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (register_window.winfo_screenheight() // 2) - (height // 2)
+        register_window.geometry(f'+{x}+{y}')
+        
+        # Make it modal
+        register_window.grab_set()
+        
+    def on_register_closed(self):
+        """Handle when registration window is closed"""
+        # Show the login window again
+        self.deiconify()
+        # Clear any previous error messages
+        self.error_label.configure(text="")
