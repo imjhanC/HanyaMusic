@@ -39,7 +39,7 @@ class FirebaseManager:
         return ''.join(random.choices(chars, k=6))
     
     def is_username_available(self, username: str) -> bool:
-        """Check if a username is available.
+        """Check if a username is available by checking all documents in users collection.
         
         Args:
             username: Username to check
@@ -47,12 +47,25 @@ class FirebaseManager:
         Returns:
             bool: True if username is available, False otherwise
         """
-        users_ref = self.db.collection('users')
-        query = users_ref.where('username', '==', username).limit(1)
-        return len(query.get()) == 0
+        try:
+            users_ref = self.db.collection('users')
+            # Get all documents and check each username
+            docs = users_ref.stream()
+            
+            for doc in docs:
+                user_data = doc.to_dict()
+                stored_username = user_data.get('username', '')
+                # Compare with encrypted username
+                if stored_username == self._encrypt_data(username):
+                    return False
+            return True
+            
+        except Exception as e:
+            print(f"Error checking username availability: {str(e)}")
+            return False
     
-    def register_user(self, username: str, password: str, recovery_code: str = None) -> bool:
-        """Register a new user with encrypted credentials.
+    def register_user(self, username: str, password: str, recovery_code: str = None) -> tuple:
+        """Register a new user with auto-generated document ID.
         
         Args:
             username: User's username or email
@@ -60,7 +73,7 @@ class FirebaseManager:
             recovery_code: Optional recovery code (will generate if not provided)
             
         Returns:
-            bool: True if registration was successful, False otherwise
+            tuple: (success: bool, result: str)
         """
         # Generate recovery code if not provided
         if not recovery_code:
@@ -72,7 +85,7 @@ class FirebaseManager:
         encrypted_recovery = self._encrypt_data(recovery_code)
         
         try:
-            # Store user data in Firestore
+            # Store user data in Firestore with auto-generated document ID
             user_data = {
                 'username': encrypted_username,
                 'password': encrypted_password,
@@ -80,7 +93,8 @@ class FirebaseManager:
                 'created_at': firestore.SERVER_TIMESTAMP
             }
             
-            self.db.collection('users').document(encrypted_username).set(user_data)
+            # Use add() to create document with auto-generated ID
+            doc_ref = self.db.collection('users').add(user_data)
             return True, recovery_code
             
         except Exception as e:
@@ -88,7 +102,7 @@ class FirebaseManager:
             return False, str(e)
     
     def verify_credentials(self, username: str, password: str) -> bool:
-        """Verify user credentials.
+        """Verify user credentials by checking all documents.
         
         Args:
             username: Username or email
@@ -101,11 +115,14 @@ class FirebaseManager:
         encrypted_password = self._encrypt_data(password)
         
         try:
-            user_ref = self.db.collection('users').document(encrypted_username)
-            user_data = user_ref.get()
+            users_ref = self.db.collection('users')
+            docs = users_ref.stream()
             
-            if user_data.exists and user_data.to_dict().get('password') == encrypted_password:
-                return True
+            for doc in docs:
+                user_data = doc.to_dict()
+                if (user_data.get('username') == encrypted_username and 
+                    user_data.get('password') == encrypted_password):
+                    return True
             return False
             
         except Exception as e:

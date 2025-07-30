@@ -29,6 +29,9 @@ class RegisterPage(ctk.CTkToplevel):
         
         self.create_widgets()
         
+        # Auto-generate recovery code when window opens
+        self.generate_recovery_code()
+        
         # Center the window on screen
         self.update_idletasks()
         width = self.winfo_width()
@@ -57,7 +60,7 @@ class RegisterPage(ctk.CTkToplevel):
             height=45,
             font=ctk.CTkFont(size=14)
         )
-        self.username_entry.pack(pady=(0, 15))
+        self.username_entry.pack(pady=(0, 5))
         
         self.username_error = ctk.CTkLabel(
             self.container,
@@ -66,9 +69,9 @@ class RegisterPage(ctk.CTkToplevel):
             anchor="w",
             width=400
         )
-        self.username_error.pack(pady=(0, 5), padx=(60, 0), anchor="w")
+        self.username_error.pack(pady=(0, 10), padx=(60, 0), anchor="w")
         
-        # Password
+        # Password with eye icon
         self.password_label = ctk.CTkLabel(
             self.container, 
             text="Password",
@@ -78,19 +81,37 @@ class RegisterPage(ctk.CTkToplevel):
         )
         self.password_label.pack(pady=(0, 5), padx=(60, 0), anchor="w")
         
+        # Password frame to hold entry and eye button
+        self.password_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.password_frame.pack(pady=(0, 5))
+        
         self.password_var = ctk.StringVar()
         self.password_entry = ctk.CTkEntry(
-            self.container,
+            self.password_frame,
             textvariable=self.password_var,
             placeholder_text="Create a password",
-            width=400,
+            width=355,
             height=45,
             show="•",
             font=ctk.CTkFont(size=14)
         )
-        self.password_entry.pack(pady=(0, 10))
+        self.password_entry.pack(side="left")
         
-        # Password requirements
+        # Eye icon button for password visibility
+        self.password_visible = False
+        self.eye_btn = ctk.CTkButton(
+            self.password_frame,
+            text="🙉",
+            command=self.toggle_password_visibility,
+            width=45,
+            height=45,
+            fg_color="transparent",
+            hover_color=("#e0e0e0", "#2b2b2b"),
+            font=ctk.CTkFont(size=16)
+        )
+        self.eye_btn.pack(side="left", padx=(5, 0))
+        
+        # Password requirements with real-time validation
         self.req_frame = ctk.CTkFrame(self.container, fg_color="transparent")
         self.req_frame.pack(pady=(0, 10))
         
@@ -134,10 +155,10 @@ class RegisterPage(ctk.CTkToplevel):
             width=400,
             font=ctk.CTkFont(size=14)
         )
-        self.recovery_label.pack(pady=(10, 5), padx=(60, 0), anchor="w")
+        self.recovery_label.pack(pady=(5, 5), padx=(60, 0), anchor="w")
         
         self.recovery_frame = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.recovery_frame.pack(pady=(0, 20))
+        self.recovery_frame.pack(pady=(0, 5))
         
         self.recovery_var = ctk.StringVar()
         self.recovery_entry = ctk.CTkEntry(
@@ -150,18 +171,20 @@ class RegisterPage(ctk.CTkToplevel):
         )
         self.recovery_entry.pack(side="left", padx=(0, 10))
         
-        self.generate_btn = ctk.CTkButton(
+        # Loop symbol button for regeneration
+        self.regenerate_btn = ctk.CTkButton(
             self.recovery_frame,
-            text="Generate",
+            text="🔄",
             command=self.generate_recovery_code,
-            width=100,
+            width=45,
             height=45,
             fg_color="#1DB954",
-            hover_color="#1ed760"
+            hover_color="#1ed760",
+            font=ctk.CTkFont(size=16)
         )
-        self.generate_btn.pack(side="left")
+        self.regenerate_btn.pack(side="left")
         
-        # Register Button
+        # Register Button (with more space above)
         self.register_btn = ctk.CTkButton(
             self.container,
             text="Register",
@@ -172,7 +195,7 @@ class RegisterPage(ctk.CTkToplevel):
             hover_color="#1ed760",
             font=ctk.CTkFont(size=17, weight="bold")
         )
-        self.register_btn.pack(pady=(10, 5))
+        self.register_btn.pack(pady=(25, 5))
         
         # Back to Login
         self.login_frame = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -205,36 +228,54 @@ class RegisterPage(ctk.CTkToplevel):
         )
         self.error_label.pack(pady=(10, 0))
         
-        # Bind validation events
+        # Bind validation events for real-time password validation
         self.password_var.trace('w', lambda *args: self.validate_password())
         self.username_var.trace('w', lambda *args: self.validate_username())
         self.password_entry.bind('<Return>', lambda e: self.register())
     
     def validate_password(self, *args):
+        """Real-time password validation with animated color changes"""
         password = self.password_var.get()
         
-        # Check length
+        # Check if password is blank
+        if not password:
+            self.req_length.configure(text="• At least 8 characters", text_color="red")
+            self.req_upper.configure(text="• At least 1 uppercase letter", text_color="red")
+            self.req_digit.configure(text="• At least 1 number", text_color="red")
+            self.req_special.configure(text="• At least 1 special character", text_color="red")
+            return False
+        
+        # Check length with animation
         length_ok = len(password) >= 8
-        self.req_length.configure(text_color="green" if length_ok else "red")
+        self.animate_requirement(self.req_length, length_ok)
         
-        # Check uppercase
+        # Check uppercase with animation
         upper_ok = any(c.isupper() for c in password)
-        self.req_upper.configure(text_color="green" if upper_ok else "red")
+        self.animate_requirement(self.req_upper, upper_ok)
         
-        # Check digit
+        # Check digit with animation
         digit_ok = any(c.isdigit() for c in password)
-        self.req_digit.configure(text_color="green" if digit_ok else "red")
+        self.animate_requirement(self.req_digit, digit_ok)
         
-        # Check special character
+        # Check special character with animation
         special_ok = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', password))
-        self.req_special.configure(text_color="green" if special_ok else "red")
+        self.animate_requirement(self.req_special, special_ok)
         
         return all([length_ok, upper_ok, digit_ok, special_ok])
+    
+    def animate_requirement(self, label, is_valid):
+        """Animate the color change of password requirements"""
+        if is_valid:
+            # Animate to green
+            self.after(100, lambda: label.configure(text_color="green"))
+        else:
+            # Animate to red
+            self.after(100, lambda: label.configure(text_color="red"))
     
     def validate_username(self, *args):
         username = self.username_var.get()
         if not username:
-            self.username_error.configure(text="")
+            self.username_error.configure(text="Username cannot be blank")
             return False
             
         # Simple email validation
@@ -247,36 +288,48 @@ class RegisterPage(ctk.CTkToplevel):
                 self.username_error.configure(text="Username must be 3-20 alphanumeric characters")
                 return False
         
+        # Check if username already exists
+        if not self.firebase.is_username_available(username):
+            self.username_error.configure(text="Username is exist")
+            return False
+        
         self.username_error.configure(text="")
         return True
     
     def generate_recovery_code(self):
+        """Generate a new recovery code and update the entry field"""
         code = self.firebase.generate_recovery_code()
         self.recovery_var.set(code)
+        
+        # Add a brief visual feedback
+        self.regenerate_btn.configure(fg_color="#1ed760")
+        self.after(200, lambda: self.regenerate_btn.configure(fg_color="#1DB954"))
     
     def register(self):
         username = self.username_var.get().strip()
         password = self.password_var.get()
         recovery_code = self.recovery_var.get().strip()
         
-        # Validate all fields
-        if not all([username, password, recovery_code]):
-            self.show_error("All fields are required!")
+        # Check if username is blank
+        if not username:
+            self.username_error.configure(text="Username cannot be blank")
+            return
+        
+        # Check if password is blank
+        if not password:
+            self.show_error("Password cannot be blank")
             return
             
+        # Validate username format and availability
         if not self.validate_username():
             return
             
+        # Validate password requirements
         if not self.validate_password():
-            self.show_error("Please fix password requirements!")
-            return
-            
-        # Check username availability
-        if not self.firebase.is_username_available(username):
-            self.username_error.configure(text="Username/Email already exists!")
+            self.show_error("Password does not meet the requirements")
             return
         
-        # Register user
+        # Register user (username availability already checked in validate_username)
         success, result = self.firebase.register_user(username, password, recovery_code)
         
         if success:
@@ -302,6 +355,19 @@ class RegisterPage(ctk.CTkToplevel):
         else:
             # If no callback provided, just close the window
             self.destroy()
+
+    def toggle_password_visibility(self):
+        """Toggle password visibility between hidden and shown"""
+        if self.password_visible:
+            # Hide password
+            self.password_entry.configure(show="•")
+            self.eye_btn.configure(text="🙈")
+            self.password_visible = False
+        else:
+            # Show password
+            self.password_entry.configure(show="")
+            self.eye_btn.configure(text="🙉")
+            self.password_visible = True
 
 if __name__ == "__main__":
     app = ctk.CTk()
