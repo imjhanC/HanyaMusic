@@ -350,8 +350,12 @@ class RegisterPage(ctk.CTkToplevel):
     
     def go_to_login(self):
         if self.switch_to_login:
-            self.destroy()
+            # Hide the register window first
+            self.withdraw()
+            # Call the login callback
             self.switch_to_login()
+            # Destroy the register window after a short delay
+            self.after(100, self.destroy)
         else:
             # If no callback provided, just close the window
             self.destroy()

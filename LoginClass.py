@@ -67,15 +67,33 @@ class LoginWindow(ctk.CTkToplevel):
         )
         self.password_label.pack(pady=(0, 5), padx=(60, 0), anchor="w")
         
+        # Password frame to hold entry and eye button
+        self.password_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.password_frame.pack(pady=(0, 20))
+        
         self.password_entry = ctk.CTkEntry(
-            self.container,
+            self.password_frame,
             placeholder_text="Enter your password",
-            width=400,
+            width=355,
             height=45,
             show="•",
             font=ctk.CTkFont(size=14)
         )
-        self.password_entry.pack(pady=(0, 20))
+        self.password_entry.pack(side="left")
+        
+        # Eye icon button for password visibility
+        self.password_visible = False
+        self.eye_btn = ctk.CTkButton(
+            self.password_frame,
+            text="🙈",
+            command=self.toggle_password_visibility,
+            width=45,
+            height=45,
+            fg_color="transparent",
+            hover_color=("#e0e0e0", "#2b2b2b"),
+            font=ctk.CTkFont(size=16)
+        )
+        self.eye_btn.pack(side="left", padx=(5, 0))
         
         # Login button
         self.login_button = ctk.CTkButton(
@@ -184,3 +202,16 @@ class LoginWindow(ctk.CTkToplevel):
         self.deiconify()
         # Clear any previous error messages
         self.error_label.configure(text="")
+
+    def toggle_password_visibility(self):
+        """Toggle password visibility between hidden and shown"""
+        if self.password_visible:
+            # Hide password
+            self.password_entry.configure(show="•")
+            self.eye_btn.configure(text="🙈")
+            self.password_visible = False
+        else:
+            # Show password
+            self.password_entry.configure(show="")
+            self.eye_btn.configure(text="🙉")
+            self.password_visible = True
