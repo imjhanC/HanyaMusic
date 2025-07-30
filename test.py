@@ -80,6 +80,7 @@ class App(ctk.CTk):
 
         # User state
         self.current_user = None
+        self.logged_in = False
 
         # Layout containers
         self.create_main_area()
@@ -134,9 +135,22 @@ class App(ctk.CTk):
         
         self.loading_label = None
 
+        # User section frame to hold username and icon
+        self.user_section = ctk.CTkFrame(self, fg_color="transparent")
+        self.user_section.place(relx=0.95, y=10, anchor="ne")
+        
+        # Username label (initially hidden)
+        self.username_label = ctk.CTkLabel(
+            self.user_section,
+            text="",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#1DB954"
+        )
+        # Don't pack initially - will be shown when logged in
+        
         # User icon with dropdown menu
         self.user_icon = ctk.CTkButton(
-            self, 
+            self.user_section, 
             text="", 
             image=self.load_user_icon(), 
             width=40, 
@@ -145,7 +159,7 @@ class App(ctk.CTk):
             hover_color="#333333",
             command=self.toggle_user_menu
         )
-        self.user_icon.place(relx=0.95, y=10, anchor="ne")
+        self.user_icon.pack(side="right")
         
         # Create user menu (initially hidden)
         self.user_menu = ctk.CTkFrame(
@@ -158,30 +172,15 @@ class App(ctk.CTk):
         )
         self.user_menu_visible = False
         
-        # Menu items
-        menu_items = [
+        # Menu items (will be updated based on login status)
+        self.menu_items = [
             ("Log In", self.on_login_clicked),
             ("Settings", self.on_settings_clicked),
             ("About", self.on_about_clicked)
         ]
         
-        for i, (text, command) in enumerate(menu_items):
-            btn = ctk.CTkButton(
-                self.user_menu,
-                text=text,
-                font=ctk.CTkFont(size=14),
-                fg_color="transparent",
-                hover_color="#404040",
-                anchor="w",
-                command=command,
-                height=40
-            )
-            btn.pack(fill="x", padx=5, pady=2 if i < len(menu_items) - 1 else 5)
-            
-            # Add separator between items
-            if i < len(menu_items) - 1:
-                ctk.CTkFrame(self.user_menu, height=1, fg_color="#444444").pack(fill="x", padx=5)
-
+        self.create_user_menu()
+        
         # 'X' Button to clear input
         self.clear_button = ctk.CTkButton(
             self.search_frame,
@@ -235,18 +234,55 @@ class App(ctk.CTk):
     def on_login_success(self, username):
         """Handle successful login"""
         self.current_user = username
+        self.logged_in = True
         print(f"Successfully logged in as {username}")
-        # Update UI to show logged in state if needed
-        # For example, you could update the user icon or show the username
         
-        # Example: Update user icon to show logged in state
+        # Show username to the left of user icon
+        self.username_label.configure(text=username)
+        self.username_label.pack(side="left", padx=(0, 10))
+        
+        # Update menu items to show Log Out instead of Log In
+        self.menu_items = [
+            ("Log Out", self.on_logout_clicked),
+            ("Settings", self.on_settings_clicked),
+            ("About", self.on_about_clicked)
+        ]
+        
+        # Recreate the menu with updated items
+        self.create_user_menu()
+        
+        # Update user icon to show logged in state
         try:
             # You could load a different icon for logged-in users
             logged_in_icon = self.load_user_icon()  # Or load a different icon
             self.user_icon.configure(image=logged_in_icon)
         except Exception as e:
             print(f"Error updating user icon: {e}")
-    
+
+    def on_logout_clicked(self):
+        """Handle logout menu item click"""
+        self.hide_user_menu()
+        
+        # Clear user state
+        self.current_user = None
+        self.logged_in = False
+        
+        # Hide username
+        self.username_label.configure(text="")
+        self.username_label.pack_forget()
+        
+        # Update menu items back to Log In
+        self.menu_items = [
+            ("Log In", self.on_login_clicked),
+            ("Settings", self.on_settings_clicked),
+            ("About", self.on_about_clicked)
+        ]
+        
+        # Recreate the menu with updated items
+        self.create_user_menu()
+        
+        print("User logged out")
+
     def on_settings_clicked(self):
         """Handle settings menu item click"""
         print("Settings clicked")
@@ -743,17 +779,43 @@ class App(ctk.CTk):
     def update_user_menu_position(self):
         """Update the position of the user menu to follow the user icon"""
         if hasattr(self, 'user_icon') and hasattr(self, 'user_menu'):
-            # Get position of user icon relative to the window
-            x = self.user_icon.winfo_x()
-            y = self.user_icon.winfo_y() + self.user_icon.winfo_height()
+            # Get position of user section relative to the window
+            section_x = self.user_section.winfo_x()
+            section_y = self.user_section.winfo_y()
+            section_width = self.user_section.winfo_width()
             
-            # Calculate position to align menu with right edge of window
+            # Calculate position to align menu with right edge of user section
             menu_width = self.user_menu.winfo_reqwidth()
-            menu_x = x - menu_width + self.user_icon.winfo_width()
+            menu_x = section_x + section_width - menu_width
+            
+            # Position the menu below the user section
+            menu_y = section_y + self.user_section.winfo_height() + 5
             
             # Position the menu
-            self.user_menu.place(x=menu_x, y=y + 5)
+            self.user_menu.place(x=menu_x, y=menu_y)
             self.user_menu.lift()
+
+    def create_user_menu(self):
+        """Recreate the user menu with updated items"""
+        for widget in self.user_menu.winfo_children():
+            widget.destroy()
+        
+        for i, (text, command) in enumerate(self.menu_items):
+            btn = ctk.CTkButton(
+                self.user_menu,
+                text=text,
+                font=ctk.CTkFont(size=14),
+                fg_color="transparent",
+                hover_color="#404040",
+                anchor="w",
+                command=command,
+                height=40
+            )
+            btn.pack(fill="x", padx=5, pady=2 if i < len(self.menu_items) - 1 else 5)
+            
+            # Add separator between items
+            if i < len(self.menu_items) - 1:
+                ctk.CTkFrame(self.user_menu, height=1, fg_color="#444444").pack(fill="x", padx=5)
 
     def __del__(self):
         """Cleanup when app is destroyed"""
