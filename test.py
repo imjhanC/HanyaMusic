@@ -690,11 +690,11 @@ class App(ctk.CTk):
             widget.destroy()
             
         # Create search results screen
-        search_screen = SearchScreen(self.main_frame, results, self.load_more_results)
-        search_screen.pack(fill="both", expand=True)
+        self.search_screen = SearchScreen(self.main_frame, results, self.load_more_results)  # Store as instance variable
+        self.search_screen.pack(fill="both", expand=True)
         
         # Set song selection callback
-        search_screen.set_song_selection_callback(self.on_song_selected)
+        self.search_screen.set_song_selection_callback(self.on_song_selected)
         
         # Remove focus from search bar and stop listening to keyboard
         self.focus_set()  # Move focus to main window
@@ -702,7 +702,7 @@ class App(ctk.CTk):
         self.search_enabled = False
         
         # Finalize display after a short delay to ensure everything is rendered
-        self.after(100, lambda: self.finalize_display(search_screen))
+        self.after(100, lambda: self.finalize_display(self.search_screen))
     
     def on_song_selected(self, song_data, playlist, current_index):
         """Called when a song is selected from the search results"""
