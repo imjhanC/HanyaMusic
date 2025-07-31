@@ -11,6 +11,11 @@ class RegisterPage(ctk.CTkToplevel):
         self.geometry("600x650")  # Slightly taller to accommodate more fields
         self.resizable(False, False)
         
+        # Make window truly modal
+        self.grab_set()  # Make window modal
+        self.focus_force()  # Force focus to this window
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)  # Handle window closing
+        
         # Configure grid
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -39,6 +44,11 @@ class RegisterPage(ctk.CTkToplevel):
         x = (self.winfo_screenwidth() // 2) - (width // 2)
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f'+{x}+{y}')
+    
+    def on_closing(self):
+        """Handle window closing"""
+        self.grab_release()  # Release the grab
+        self.destroy()
     
     def create_widgets(self):
         # Username/Email
@@ -232,6 +242,9 @@ class RegisterPage(ctk.CTkToplevel):
         self.password_var.trace('w', lambda *args: self.validate_password())
         self.username_var.trace('w', lambda *args: self.validate_username())
         self.password_entry.bind('<Return>', lambda e: self.register())
+        
+        # Bind Escape key to close window
+        self.bind('<Escape>', lambda e: self.on_closing())
     
     def validate_password(self, *args):
         """Real-time password validation with animated color changes"""
@@ -350,14 +363,15 @@ class RegisterPage(ctk.CTkToplevel):
     
     def go_to_login(self):
         if self.switch_to_login:
-            # Hide the register window first
-            self.withdraw()
+            # Release grab before switching
+            self.grab_release()
             # Call the login callback
             self.switch_to_login()
             # Destroy the register window after a short delay
             self.after(100, self.destroy)
         else:
             # If no callback provided, just close the window
+            self.grab_release()
             self.destroy()
 
     def toggle_password_visibility(self):

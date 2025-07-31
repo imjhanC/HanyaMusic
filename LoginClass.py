@@ -9,7 +9,12 @@ class LoginWindow(ctk.CTkToplevel):
         self.title("Login to HanyaMusic")
         self.geometry("600x500")
         self.resizable(False, False)
+        
+        # Make window truly modal
         self.grab_set()  # Make window modal
+        self.focus_force()  # Force focus to this window
+        self.transient(parent)  # Make this window transient to parent
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)  # Handle window closing
         
         # Center the window on screen
         self.update_idletasks()
@@ -142,6 +147,9 @@ class LoginWindow(ctk.CTkToplevel):
         # Bind Enter key to login
         self.password_entry.bind('<Return>', lambda e: self.attempt_login())
         
+        # Bind Escape key to close window
+        self.bind('<Escape>', lambda e: self.on_closing())
+        
         # Center the window on screen
         self.update_idletasks()
         width = self.winfo_width()
@@ -149,6 +157,11 @@ class LoginWindow(ctk.CTkToplevel):
         x = (self.winfo_screenwidth() // 2) - (width // 2)
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f'+{x}+{y}')
+        
+    def on_closing(self):
+        """Handle window closing"""
+        self.grab_release()  # Release the grab
+        self.destroy()
         
     def attempt_login(self):
         """Handle login attempt"""
@@ -167,6 +180,7 @@ class LoginWindow(ctk.CTkToplevel):
         if firebase.verify_credentials(username, password):
             if self.on_login_success:
                 self.on_login_success(username)
+            self.grab_release()  # Release the grab before destroying
             self.destroy()
         else:
             self.show_error("Invalid username or password")
@@ -179,8 +193,8 @@ class LoginWindow(ctk.CTkToplevel):
     
     def on_signup_clicked(self):
         """Handle signup link click - open registration window"""
-        # Hide the login window while registration is open
-        self.withdraw()
+        # Release grab temporarily
+        self.grab_release()
         
         # Create and show registration window
         register_window = RegisterPage(switch_to_login_callback=self.on_register_closed)
@@ -198,8 +212,9 @@ class LoginWindow(ctk.CTkToplevel):
         
     def on_register_closed(self):
         """Handle when registration window is closed"""
-        # Show the login window again
-        self.deiconify()
+        # Re-grab focus for login window
+        self.grab_set()
+        self.focus_force()
         # Clear any previous error messages
         self.error_label.configure(text="")
 
