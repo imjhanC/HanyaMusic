@@ -10,6 +10,7 @@ import json
 from functools import lru_cache
 import math
 from LoginClass import LoginWindow
+from FirebaseClass import FirebaseManager
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -689,8 +690,8 @@ class App(ctk.CTk):
         for widget in self.main_frame.winfo_children():
             widget.destroy()
             
-        # Create search results screen
-        self.search_screen = SearchScreen(self.main_frame, results, self.load_more_results)  # Store as instance variable
+        # Create search results screen with current user
+        self.search_screen = SearchScreen(self.main_frame, results, self.load_more_results, self.current_user)
         self.search_screen.pack(fill="both", expand=True)
         
         # Set song selection callback

@@ -4,12 +4,15 @@ import requests
 from io import BytesIO
 import threading
 from playerClass import MusicPlayerContainer
+from FirebaseClass import FirebaseManager
 
 class SearchScreen(ctk.CTkFrame):
-    def __init__(self, parent, results, load_more_callback=None, *args, **kwargs):
+    def __init__(self, parent, results, load_more_callback=None, current_user=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.results = results
         self.load_more_callback = load_more_callback
+        self.current_user = current_user
+        self.firebase_manager = FirebaseManager() if current_user else None
         self.loading_more = False
         self.no_more_results = False
         self.configure(fg_color="transparent")
@@ -102,6 +105,35 @@ class SearchScreen(ctk.CTkFrame):
             
             # Call the callback with song data, playlist, and current index
             self.song_selection_callback(song_data, self.results, current_index)
+    
+    def _on_like_button_clicked(self, song_data, like_button):
+        """Handle like button click"""
+        if not self.current_user or not self.firebase_manager:
+            print("User not logged in")
+            return
+        
+        # Toggle like status
+        success, is_liked, message = self.firebase_manager.toggle_song_like(self.current_user, song_data)
+        
+        if success and like_button:
+            # Update button appearance with consistent sizing
+            if is_liked:
+                like_button.configure(
+                    text="♥",
+                    fg_color="#FF6B6B",
+                    hover_color="#FF5252",
+                    font=ctk.CTkFont(size=14)  # Smaller font for filled heart
+                )
+            else:
+                like_button.configure(
+                    text="♡",
+                    fg_color="#333333",
+                    hover_color="#444444",
+                    font=ctk.CTkFont(size=16)  # Normal font for empty heart
+                )
+            print(message)
+        else:
+            print(f"Error: {message}")
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
@@ -203,6 +235,7 @@ class SearchScreen(ctk.CTkFrame):
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
         card.grid_columnconfigure(1, weight=1)  # Make the content area expandable
         card.grid_columnconfigure(2, weight=0, minsize=70)  # Make the button column just wide enough
+        card.grid_columnconfigure(3, weight=0, minsize=50)  # Make room for like button
         
         # Thumbnail container with fixed aspect ratio
         thumb_container = ctk.CTkFrame(card, fg_color="transparent", width=120, height=80)
@@ -270,6 +303,38 @@ class SearchScreen(ctk.CTkFrame):
             )
             details_label.grid(row=1, column=0, sticky="nsw")
         
+        # Like button (only show if user is logged in)
+        like_button = None
+        if self.current_user and self.firebase_manager:
+            # Check if song is already liked
+            is_liked = self.firebase_manager.is_song_liked(self.current_user, result.get('videoId'))
+            
+            # Use consistent heart symbols with appropriate font sizes
+            if is_liked:
+                like_text = "♥"
+                like_font = ctk.CTkFont(size=14)  # Smaller font for filled heart
+                like_color = "#FF6B6B"
+                like_hover = "#FF5252"
+            else:
+                like_text = "♡"
+                like_font = ctk.CTkFont(size=16)  # Normal font for empty heart
+                like_color = "#333333"
+                like_hover = "#444444"
+            
+            like_button = ctk.CTkButton(
+                card,
+                text=like_text,
+                width=40,
+                height=40,
+                corner_radius=20,
+                fg_color=like_color,
+                hover_color=like_hover,
+                text_color="#FFFFFF",
+                font=like_font,
+                command=lambda r=result: self._on_like_button_clicked(r, like_button)
+            )
+            like_button.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=15, sticky="nsew")
+        
         # Play button (right-aligned)
         play_btn = ctk.CTkButton(
             card,
@@ -285,7 +350,7 @@ class SearchScreen(ctk.CTkFrame):
             border_spacing=0,
             command=lambda: self._on_song_selected(result)
         )
-        play_btn.grid(row=0, column=2, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
+        play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:
@@ -305,8 +370,8 @@ class SearchScreen(ctk.CTkFrame):
         
         # Update wraplength on window resize
         def update_wraplength(event):
-            # Calculate available width for the title (total width - thumbnail - play button - paddings)
-            available_width = max(100, card.winfo_width() - 220)  # 220 = thumbnail(120) + play button(50) + paddings(50)
+            # Calculate available width for the title (total width - thumbnail - buttons - paddings)
+            available_width = max(100, card.winfo_width() - 270)  # 270 = thumbnail(120) + like button(40) + play button(60) + paddings(50)
             title.configure(wraplength=available_width)
             
         # Bind to card resize
