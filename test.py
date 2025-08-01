@@ -47,6 +47,7 @@ class App(ctk.CTk):
         
         # State
         self.menu_visible = False
+        self.side_menu_visible = False
         self.search_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)  # Increased workers
         self.current_search_future = None
         self.current_search_query = ""
@@ -87,9 +88,263 @@ class App(ctk.CTk):
         self.create_main_area()
         self.create_topbar()
         self.create_music_player_area()
+        self.create_side_menu()
         
         # Bind window events
         self.bind('<Configure>', self._on_window_configure)
+
+    def create_side_menu(self):
+        """Create the side menu that slides in from the left"""
+        # Side menu container
+        self.side_menu = ctk.CTkFrame(
+            self,
+            width=300,
+            fg_color="#1a1a1a",
+            corner_radius=0
+        )
+        
+        # Initially hide the side menu off-screen to the left
+        # Position it to start right under the hamburger button
+        hamburger_y = 10  # Same Y position as hamburger button
+        hamburger_height = 40  # Height of hamburger button
+        topbar_height = hamburger_y + hamburger_height + 10  # Add some padding
+        
+        # Calculate the height to fill from topbar to bottom
+        window_height = 1080  # Or use self.winfo_height() if you want dynamic
+        sidebar_height = window_height - topbar_height
+        
+        self.side_menu.configure(height=sidebar_height)
+        
+        # Position below topbar, aligned with hamburger button area
+        self.side_menu.place(relx=-0.3, y=topbar_height, relwidth=0.3, anchor="w")
+        
+        # Side menu content
+        self.create_side_menu_content()
+    
+    def create_side_menu_content(self):
+        """Create the content for the side menu"""
+        # Header
+        header_frame = ctk.CTkFrame(self.side_menu, fg_color="transparent", height=80)
+        header_frame.pack(fill="x", padx=20, pady=20)
+        header_frame.pack_propagate(False)
+        
+        # Close button (←) at upper right corner
+        close_btn = ctk.CTkButton(
+            header_frame,
+            text="←",
+            width=40,
+            height=40,
+            corner_radius=20,
+            fg_color="transparent",
+            hover_color="#333333",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=20),
+            command=self.toggle_side_menu
+        )
+        close_btn.pack(side="right")
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            header_frame,
+            text="Menu",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        title_label.pack(side="left", pady=20)
+        
+        # Menu items container
+        menu_items_frame = ctk.CTkFrame(self.side_menu, fg_color="transparent")
+        menu_items_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Menu items
+        menu_items = [
+            ("🏠 Home", self.on_home_clicked),
+            ("🎵 My Liked Songs", self.on_liked_songs_clicked),
+            ("⚙️ Settings", self.on_settings_clicked),
+            ("ℹ️ About", self.on_about_clicked),
+            ("📞 Contact", self.on_contact_clicked),
+        ]
+        
+        for text, command in menu_items:
+            btn = ctk.CTkButton(
+                menu_items_frame,
+                text=text,
+                font=ctk.CTkFont(size=16),
+                fg_color="transparent",
+                hover_color="#333333",
+                anchor="w",
+                command=command,
+                height=50
+            )
+            btn.pack(fill="x", pady=5)
+        
+        # Bottom section
+        bottom_frame = ctk.CTkFrame(self.side_menu, fg_color="transparent")
+        bottom_frame.pack(fill="x", padx=20, pady=20)
+        
+        # User info
+        if self.logged_in:
+            user_info = ctk.CTkLabel(
+                bottom_frame,
+                text=f"Logged in as: {self.current_user}",
+                font=ctk.CTkFont(size=14),
+                text_color="#1DB954"
+            )
+            user_info.pack(pady=10)
+            
+            # Logout button
+            logout_btn = ctk.CTkButton(
+                bottom_frame,
+                text="Log Out",
+                font=ctk.CTkFont(size=14),
+                fg_color="#FF6B6B",
+                hover_color="#FF5252",
+                command=self.on_logout_clicked
+            )
+            logout_btn.pack(fill="x", pady=5)
+        else:
+            login_btn = ctk.CTkButton(
+                bottom_frame,
+                text="Log In",
+                font=ctk.CTkFont(size=14),
+                fg_color="#1DB954",
+                hover_color="#1ed760",
+                command=self.on_login_clicked
+            )
+            login_btn.pack(fill="x", pady=5)
+    
+    def toggle_side_menu(self):
+        """Toggle the side menu visibility"""
+        if self.side_menu_visible:
+            self.hide_side_menu()
+        else:
+            self.show_side_menu()
+    
+    def show_side_menu(self):
+        """Show the side menu with animation"""
+        self.side_menu_visible = True
+        
+        # Calculate topbar height dynamically
+        hamburger_y = 10
+        hamburger_height = 40
+        topbar_height = hamburger_y + hamburger_height + 279
+        
+        # Position the menu off-screen initially, below topbar
+        self.side_menu.place(relx=-0.3, y=topbar_height, relwidth=0.2, anchor="w")
+        
+        # Animate the menu sliding in
+        def animate_in(progress=0):
+            if progress <= 1.0 and self.side_menu_visible:
+                # Calculate position based on progress (-0.3 to 0.0)
+                relx = -0.3 + (0.3 * progress)
+                self.side_menu.place(relx=relx, y=topbar_height, relwidth=0.2, anchor="w")
+                if progress < 1.0:
+                    self.after(10, lambda: animate_in(progress + 0.1))
+        
+        animate_in()
+    
+    def hide_side_menu(self):
+        """Hide the side menu with animation"""
+        self.side_menu_visible = False
+        
+        # Calculate topbar height
+        hamburger_y = 10
+        hamburger_height = 40
+        topbar_height = hamburger_y + hamburger_height + 279
+        
+        # Animate the menu sliding out
+        def animate_out(progress=0):
+            if progress <= 1.0 and not self.side_menu_visible:
+                # Calculate position based on progress (0.0 to -0.3)
+                relx = -0.3 + (0.3 * (1 - progress))
+                self.side_menu.place(relx=relx, y=topbar_height, relwidth=0.2, anchor="w")
+                if progress < 1.0:
+                    self.after(10, lambda: animate_out(progress + 0.1))
+                else:
+                    # Hide completely when animation is done
+                    self.side_menu.place_forget()
+        
+        animate_out()
+    
+    def on_home_clicked(self):
+        """Handle home menu item click"""
+        self.hide_side_menu()
+        self.show_main_frame()
+        print("Home clicked")
+    
+    def on_liked_songs_clicked(self):
+        """Handle liked songs menu item click"""
+        self.hide_side_menu()
+        if self.logged_in:
+            # Show liked songs
+            self.show_liked_songs()
+        else:
+            # Show login prompt
+            self.on_login_clicked()
+        print("Liked songs clicked")
+    
+    def show_liked_songs(self):
+        """Show user's liked songs"""
+        if not self.logged_in:
+            return
+        
+        # Clear main frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        
+        # Get liked songs from Firebase
+        firebase = FirebaseManager()
+        liked_urls = firebase.get_user_liked_songs(self.current_user)
+        
+        if not liked_urls:
+            # Show empty state
+            empty_label = ctk.CTkLabel(
+                self.main_frame,
+                text="No liked songs yet.\nSearch for songs and like them to see them here!",
+                font=ctk.CTkFont(size=18),
+                text_color="gray"
+            )
+            empty_label.pack(expand=True)
+            return
+        
+        # Convert URLs to song data format
+        liked_songs = []
+        for url in liked_urls:
+            # Extract video ID from URL
+            if "youtube.com/watch?v=" in url:
+                video_id = url.split("v=")[1].split("&")[0]
+                liked_songs.append({
+                    'videoId': video_id,
+                    'title': f"Liked Song ({video_id})",
+                    'uploader': 'Unknown',
+                    'duration': '0:00',
+                    'view_count': '0 views',
+                    'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
+                    'url': url
+                })
+        
+        # Display liked songs
+        self.search_screen = SearchScreen(self.main_frame, liked_songs, None, self.current_user)
+        self.search_screen.pack(fill="both", expand=True)
+        self.search_screen.set_song_selection_callback(self.on_song_selected)
+    
+    def on_settings_clicked(self):
+        """Handle settings menu item click"""
+        self.hide_side_menu()
+        print("Settings clicked")
+        # Add settings functionality here
+    
+    def on_about_clicked(self):
+        """Handle about menu item click"""
+        self.hide_side_menu()
+        print("About clicked")
+        # Add about dialog here
+    
+    def on_contact_clicked(self):
+        """Handle contact menu item click"""
+        self.hide_side_menu()
+        print("Contact clicked")
+        # Add contact functionality here
 
     def create_music_player_area(self):
         """Create the area at the bottom for the music player"""
@@ -182,6 +437,21 @@ class App(ctk.CTk):
         
         self.create_user_menu()
         
+        # Hamburger menu button (left side)
+        self.hamburger_btn = ctk.CTkButton(
+            self,
+            text="☰",
+            width=40,
+            height=40,
+            corner_radius=20,
+            fg_color="transparent",
+            hover_color="#333333",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=20),
+            command=self.toggle_side_menu
+        )
+        self.hamburger_btn.place(x=20, y=10)
+        
         # 'X' Button to clear input
         self.clear_button = ctk.CTkButton(
             self.search_frame,
@@ -259,6 +529,9 @@ class App(ctk.CTk):
             self.user_icon.configure(image=logged_in_icon)
         except Exception as e:
             print(f"Error updating user icon: {e}")
+        
+        # Update side menu content
+        self.update_side_menu_content()
 
     def on_logout_clicked(self):
         """Handle logout menu item click"""
@@ -282,7 +555,19 @@ class App(ctk.CTk):
         # Recreate the menu with updated items
         self.create_user_menu()
         
+        # Update side menu content
+        self.update_side_menu_content()
+        
         print("User logged out")
+
+    def update_side_menu_content(self):
+        """Update the side menu content based on login status"""
+        # Clear existing content
+        for widget in self.side_menu.winfo_children():
+            widget.destroy()
+        
+        # Recreate content
+        self.create_side_menu_content()
 
     def on_settings_clicked(self):
         """Handle settings menu item click"""
