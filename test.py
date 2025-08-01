@@ -104,21 +104,10 @@ class App(ctk.CTk):
         )
         
         # Initially hide the side menu off-screen to the left
-        # Position it to start right under the hamburger button
-        hamburger_y = 10  # Same Y position as hamburger button
-        hamburger_height = 40  # Height of hamburger button
-        topbar_height = hamburger_y + hamburger_height + 10  # Add some padding
+        # Use relheight=1.0 and rely=0 to make it fill the entire window height
+        self.side_menu.place(relx=-0.3, rely=0, relwidth=0.3, relheight=1.0, anchor="nw")
         
-        # Calculate the height to fill from topbar to bottom
-        window_height = 1080  # Or use self.winfo_height() if you want dynamic
-        sidebar_height = window_height - topbar_height
-        
-        self.side_menu.configure(height=sidebar_height)
-        
-        # Position below topbar, aligned with hamburger button area
-        self.side_menu.place(relx=-0.3, y=topbar_height, relwidth=0.3, anchor="w")
-        
-        # Side menu content
+        # Create side menu content
         self.create_side_menu_content()
     
     def create_side_menu_content(self):
@@ -224,20 +213,15 @@ class App(ctk.CTk):
         """Show the side menu with animation"""
         self.side_menu_visible = True
         
-        # Calculate topbar height dynamically
-        hamburger_y = 10
-        hamburger_height = 40
-        topbar_height = hamburger_y + hamburger_height + 279
-        
-        # Position the menu off-screen initially, below topbar
-        self.side_menu.place(relx=-0.3, y=topbar_height, relwidth=0.2, anchor="w")
+        # Position the menu off-screen initially, using full height
+        self.side_menu.place(relx=-0.3, rely=0, relwidth=0.2, relheight=1.0, anchor="nw")
         
         # Animate the menu sliding in
         def animate_in(progress=0):
             if progress <= 1.0 and self.side_menu_visible:
                 # Calculate position based on progress (-0.3 to 0.0)
                 relx = -0.3 + (0.3 * progress)
-                self.side_menu.place(relx=relx, y=topbar_height, relwidth=0.2, anchor="w")
+                self.side_menu.place(relx=relx, rely=0, relwidth=0.2, relheight=1.0, anchor="nw")
                 if progress < 1.0:
                     self.after(10, lambda: animate_in(progress + 0.1))
         
@@ -247,17 +231,12 @@ class App(ctk.CTk):
         """Hide the side menu with animation"""
         self.side_menu_visible = False
         
-        # Calculate topbar height
-        hamburger_y = 10
-        hamburger_height = 40
-        topbar_height = hamburger_y + hamburger_height + 279
-        
         # Animate the menu sliding out
         def animate_out(progress=0):
             if progress <= 1.0 and not self.side_menu_visible:
                 # Calculate position based on progress (0.0 to -0.3)
                 relx = -0.3 + (0.3 * (1 - progress))
-                self.side_menu.place(relx=relx, y=topbar_height, relwidth=0.2, anchor="w")
+                self.side_menu.place(relx=relx, rely=0, relwidth=0.2, relheight=1.0, anchor="nw")
                 if progress < 1.0:
                     self.after(10, lambda: animate_out(progress + 0.1))
                 else:
@@ -265,7 +244,7 @@ class App(ctk.CTk):
                     self.side_menu.place_forget()
         
         animate_out()
-    
+        
     def on_home_clicked(self):
         """Handle home menu item click"""
         self.hide_side_menu()
@@ -1050,17 +1029,33 @@ class App(ctk.CTk):
 
     def _on_window_configure(self, event):
         """Handle window resize events with debounce"""
-        if not self._resize_in_progress:
-            self._resize_in_progress = True
-            if self._resize_after_id:
-                self.after_cancel(self._resize_after_id)
-            self._resize_after_id = self.after(100, self._process_resize)
+        # Only handle resize events for the main window, not child widgets
+        if event.widget == self:
+            if not self._resize_in_progress:
+                self._resize_in_progress = True
+                if self._resize_after_id:
+                    self.after_cancel(self._resize_after_id)
+                self._resize_after_id = self.after(100, self._process_resize)
     
     def _process_resize(self):
         """Process window resize - update menu position if visible"""
         self._resize_in_progress = False
+        
+        # Update user menu position if visible
         if self.user_menu_visible:
             self.update_user_menu_position()
+        
+        # Update sidebar position if visible (maintains its relative positioning automatically)
+        # The sidebar will automatically adjust its height due to relheight=1.0
+        if self.side_menu_visible:
+            # Force update the sidebar position to ensure it stays properly positioned
+            current_relx = self.side_menu.place_info().get('relx', '0')
+            if current_relx:
+                try:
+                    relx_value = float(current_relx)
+                    self.side_menu.place(relx=relx_value, rely=0, relwidth=0.2, relheight=1.0, anchor="nw")
+                except (ValueError, TypeError):
+                    pass
     
     def update_user_menu_position(self):
         """Update the position of the user menu to follow the user icon"""
