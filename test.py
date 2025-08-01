@@ -11,11 +11,191 @@ from functools import lru_cache
 import math
 from LoginClass import LoginWindow
 from FirebaseClass import FirebaseManager
+from datetime import datetime
 
 # Setup
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue") 
-
+class AnimatedBanner(ctk.CTkFrame):
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        
+        # Animation variables
+        self.animation_offset = 0
+        self.animation_speed = 2
+        self.canvas_width = 800
+        self.canvas_height = 200
+        
+        # Create canvas for gradient animation
+        self.canvas = ctk.CTkCanvas(
+            self,
+            width=self.canvas_width,
+            height=self.canvas_height,
+            highlightthickness=0
+        )
+        self.canvas.pack(fill="both", expand=True)
+        
+        # Create text label overlay
+        self.text_label = ctk.CTkLabel(
+            self,
+            text="",
+            font=ctk.CTkFont(size=32, weight="bold"),
+            text_color="white"
+        )
+        
+        # Position label in center of canvas
+        self.text_label.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Get initial greeting and colors
+        self.update_greeting()
+        
+        # Start animation
+        self.animate_banner()
+        
+        # Bind resize event
+        self.canvas.bind('<Configure>', self.on_canvas_resize)
+    
+    def get_time_based_greeting_and_colors(self):
+        """Get greeting message and color scheme based on current time"""
+        current_hour = datetime.now().hour
+        
+        if 5 <= current_hour < 12:
+            # Morning (5 AM - 12 PM)
+            greeting = "Good Morning! 🌅"
+            colors = [
+                "#FF9A56",  # Orange
+                "#FFAD56",  # Light Orange
+                "#FFD93D",  # Yellow
+                "#6BCF7C",  # Light Green
+                "#4D96FF"   # Sky Blue
+            ]
+        elif 12 <= current_hour < 17:
+            # Afternoon (12 PM - 5 PM)
+            greeting = "Good Afternoon! ☀️"
+            colors = [
+                "#FF6B6B",  # Coral
+                "#FF8E53",  # Orange
+                "#FF6B9D",  # Pink
+                "#C44569",  # Dark Pink
+                "#F38BA8"   # Rose
+            ]
+        elif 17 <= current_hour < 21:
+            # Evening (5 PM - 9 PM)
+            greeting = "Good Evening! 🌇"
+            colors = [
+                "#A8E6CF",  # Mint
+                "#88D8C0",  # Teal
+                "#6C5CE7",  # Purple
+                "#A29BFE",  # Light Purple
+                "#6C7CE7"   # Blue Purple
+            ]
+        else:
+            # Night (9 PM - 5 AM)
+            greeting = "Good Night! 🌙"
+            colors = [
+                "#2C3E50",  # Dark Blue
+                "#34495E",  # Darker Blue
+                "#5D4E75",  # Purple Grey
+                "#85586F",  # Mauve
+                "#AD7A99"   # Light Mauve
+            ]
+        
+        return greeting, colors
+    
+    def update_greeting(self):
+        """Update greeting text and colors"""
+        greeting, self.colors = self.get_time_based_greeting_and_colors()
+        self.text_label.configure(text=greeting)
+    
+    def on_canvas_resize(self, event):
+        """Handle canvas resize"""
+        self.canvas_width = event.width
+        self.canvas_height = event.height
+    
+    def create_gradient_polygon(self, x_offset):
+        """Create animated gradient using polygons"""
+        self.canvas.delete("gradient")
+        
+        # Number of gradient strips
+        strips = 50
+        strip_width = self.canvas_width / strips
+        
+        for i in range(strips + 10):  # Extra strips for smooth animation
+            # Calculate position with animation offset
+            x = (i * strip_width) + x_offset
+            
+            # Create wave effect
+            wave_amplitude = 30
+            wave_frequency = 0.02
+            wave_offset = math.sin((i + self.animation_offset * 0.1) * wave_frequency) * wave_amplitude
+            
+            # Color interpolation based on position and time
+            color_index = ((i + self.animation_offset // 10) % len(self.colors))
+            next_color_index = (color_index + 1) % len(self.colors)
+            
+            # Get colors
+            color1 = self.colors[color_index]
+            color2 = self.colors[next_color_index]
+            
+            # Interpolate between colors
+            t = (i % 10) / 10.0
+            interpolated_color = self.interpolate_color(color1, color2, t)
+            
+            # Create polygon points for wave effect
+            points = [
+                x, 0,
+                x + strip_width, 0,
+                x + strip_width, self.canvas_height + wave_offset,
+                x, self.canvas_height + wave_offset
+            ]
+            
+            # Draw gradient strip
+            if x > -strip_width and x < self.canvas_width + strip_width:
+                self.canvas.create_polygon(
+                    points,
+                    fill=interpolated_color,
+                    outline="",
+                    tags="gradient"
+                )
+    
+    def interpolate_color(self, color1, color2, t):
+        """Interpolate between two hex colors"""
+        # Convert hex to RGB
+        c1 = self.hex_to_rgb(color1)
+        c2 = self.hex_to_rgb(color2)
+        
+        # Interpolate
+        r = int(c1[0] + (c2[0] - c1[0]) * t)
+        g = int(c1[1] + (c2[1] - c1[1]) * t)
+        b = int(c1[2] + (c2[2] - c1[2]) * t)
+        
+        # Convert back to hex
+        return f"#{r:02x}{g:02x}{b:02x}"
+    
+    def hex_to_rgb(self, hex_color):
+        """Convert hex color to RGB tuple"""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    
+    def animate_banner(self):
+        """Animate the gradient banner"""
+        if not self.winfo_exists():
+            return
+        
+        # Update animation offset
+        self.animation_offset += self.animation_speed
+        
+        # Create animated gradient
+        wave_offset = math.sin(self.animation_offset * 0.05) * 50
+        self.create_gradient_polygon(wave_offset)
+        
+        # Update greeting every minute
+        if self.animation_offset % 600 == 0:  # Every 10 seconds for demo
+            self.update_greeting()
+        
+        # Schedule next frame
+        self.after(50, self.animate_banner)
+        
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -92,6 +272,9 @@ class App(ctk.CTk):
         
         # Bind window events
         self.bind('<Configure>', self._on_window_configure)
+        
+        # Show the welcome banner when app starts
+        self.show_main_frame()
 
     def create_side_menu(self):
         """Create the side menu that slides in from the left"""
@@ -565,11 +748,67 @@ class App(ctk.CTk):
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
 
     def show_main_frame(self):
+        """Enhanced show_main_frame with animated banner"""
         # Clear main_frame and recreate it
         for widget in self.main_frame.winfo_children():
             widget.destroy()
+        
+        # Recreate main frame
         self.main_frame = ctk.CTkFrame(self, fg_color="black")
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=(60, 0))
+        
+        # Create container for banner and content
+        container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Add animated banner
+        banner = AnimatedBanner(
+            container,
+            height=200,
+            corner_radius=15,
+            fg_color="transparent"
+        )
+        banner.pack(fill="x", pady=(0, 20))
+        
+        # Add welcome content below banner
+        welcome_frame = ctk.CTkFrame(container, fg_color="#1a1a1a", corner_radius=10)
+        welcome_frame.pack(fill="both", expand=True, pady=10)
+        
+        # Welcome message
+        welcome_label = ctk.CTkLabel(
+            welcome_frame,
+            text="Welcome to HanyaMusic! 🎵",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#1DB954"
+        )
+        welcome_label.pack(pady=20)
+        
+        # Features list
+        features_text = """
+    🎵 Search for your favorite songs
+    🎶 Create and manage playlists  
+    ❤️ Like and save your favorite tracks
+    🔊 High-quality audio streaming
+    🌙 Beautiful time-based themes
+        """
+        
+        features_label = ctk.CTkLabel(
+            welcome_frame,
+            text=features_text,
+            font=ctk.CTkFont(size=16),
+            text_color="white",
+            justify="left"
+        )
+        features_label.pack(pady=10)
+        
+        # Search prompt
+        search_prompt = ctk.CTkLabel(
+            welcome_frame,
+            text="Start by searching for a song in the search bar above! 🔍",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#4dff9d"
+        )
+        search_prompt.pack(pady=20)
 
     def clear_searchbar(self):
         self.searchbar.delete(0, 'end')
