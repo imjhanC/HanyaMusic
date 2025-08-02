@@ -199,35 +199,175 @@ class PlaylistScreen(ctk.CTkFrame):
                 'is_loading': True
             }
             
-            # Try to get basic info from YouTube's oEmbed API (very fast)
-            try:
-                oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-                response = requests.get(oembed_url, timeout=2)
-                if response.status_code == 200:
-                    data = response.json()
-                    song_data['title'] = data.get('title', 'Unknown Title')[:100]
-                    song_data['uploader'] = data.get('author_name', 'Unknown')[:50]
-            except Exception as e:
-                print(f"oEmbed failed for {video_id}: {e}")
+            # Try multiple fast methods in parallel
+            import concurrent.futures
+            
+            def get_oembed_data():
+                try:
+                    oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+                    response = requests.get(oembed_url, timeout=2)
+                    if response.status_code == 200:
+                        data = response.json()
+                        return {
+                            'title': data.get('title', 'Unknown Title')[:100],
+                            'uploader': data.get('author_name', 'Unknown')[:50]
+                        }
+                except Exception as e:
+                    print(f"oEmbed failed for {video_id}: {e}")
+                return {}
+            
+            def get_youtube_api_data():
+                """Try to get duration and view count from YouTube's player API (fast)"""
+                try:
+                    # YouTube's player config API (faster than yt-dlp)
+                    api_url = f"https://www.youtube.com/watch?v={video_id}"
+                    response = requests.get(api_url, timeout=3, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                    
+                    if response.status_code == 200:
+                        content = response.text
+                        
+                        # Extract duration from page source (fast method)
+                        duration_match = re.search(r'"lengthSeconds":"(\d+)"', content)
+                        if duration_match:
+                            duration_seconds = int(duration_match.group(1))
+                            formatted_duration = self.format_duration(duration_seconds)
+                        else:
+                            formatted_duration = None
+                        
+                        # Extract view count from page source
+                        view_match = re.search(r'"viewCount":"(\d+)"', content)
+                        if view_match:
+                            view_count = int(view_match.group(1))
+                            formatted_views = self.format_views(view_count)
+                        else:
+                            formatted_views = None
+                        
+                        return {
+                            'duration': formatted_duration,
+                            'view_count': formatted_views
+                        }
+                except Exception as e:
+                    print(f"YouTube API scraping failed for {video_id}: {e}")
+                return {}
+            
+            def get_innertube_data():
+                """Alternative fast method using YouTube's internal API"""
+                try:
+                    # YouTube's innertube API (used by the website)
+                    innertube_url = "https://www.youtube.com/youtubei/v1/player"
+                    payload = {
+                        "context": {
+                            "client": {
+                                "clientName": "WEB",
+                                "clientVersion": "2.20231201.01.00"
+                            }
+                        },
+                        "videoId": video_id
+                    }
+                    
+                    response = requests.post(
+                        innertube_url,
+                        json=payload,
+                        timeout=2,
+                        headers={'Content-Type': 'application/json'}
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        video_details = data.get('videoDetails', {})
+                        
+                        duration_seconds = video_details.get('lengthSeconds')
+                        view_count = video_details.get('viewCount')
+                        
+                        result = {}
+                        if duration_seconds:
+                            result['duration'] = self.format_duration(int(duration_seconds))
+                        if view_count:
+                            result['view_count'] = self.format_views(int(view_count))
+                        
+                        return result
+                except Exception as e:
+                    print(f"Innertube API failed for {video_id}: {e}")
+                return {}
+            
+            # Execute all methods in parallel for maximum speed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                future_oembed = executor.submit(get_oembed_data)
+                future_youtube = executor.submit(get_youtube_api_data)
+                future_innertube = executor.submit(get_innertube_data)
+                
+                # Collect results with short timeout
+                try:
+                    oembed_data = future_oembed.result(timeout=2)
+                    song_data.update(oembed_data)
+                except:
+                    pass
+                
+                try:
+                    youtube_data = future_youtube.result(timeout=3)
+                    if youtube_data.get('duration'):
+                        song_data['duration'] = youtube_data['duration']
+                    if youtube_data.get('view_count'):
+                        song_data['view_count'] = youtube_data['view_count']
+                except:
+                    pass
+                
+                try:
+                    innertube_data = future_innertube.result(timeout=2)
+                    # Only use innertube data if we don't have it from youtube scraping
+                    if not song_data.get('duration') or song_data['duration'] == "Loading...":
+                        if innertube_data.get('duration'):
+                            song_data['duration'] = innertube_data['duration']
+                    if not song_data.get('view_count') or song_data['view_count'] == "Loading...":
+                        if innertube_data.get('view_count'):
+                            song_data['view_count'] = innertube_data['view_count']
+                except:
+                    pass
+            
+            # Check if we got everything we need
+            has_duration = song_data.get('duration') and song_data['duration'] != "Loading..."
+            has_views = song_data.get('view_count') and song_data['view_count'] != "Loading..."
+            has_title = song_data.get('title') and song_data['title'] != "Loading..."
+            has_uploader = song_data.get('uploader') and song_data['uploader'] != "Loading..."
+            
+            # If we got most of the data instantly, mark as not loading
+            if has_title and has_uploader and (has_duration or has_views):
+                song_data['is_loading'] = False
+            
+            # Cache the result if we have good data
+            if not song_data.get('is_loading', True):
+                self.song_data_cache[video_id] = song_data
             
             return song_data
-                
+            
         except Exception as e:
             print(f"Error extracting instant song data from URL {url}: {e}")
             return None
     
     def enhance_song_data_batch(self, song_data_list):
-        """Enhance multiple songs with full metadata using parallel processing"""
+        """Enhanced batch processing - only for songs that still need data"""
         def enhance_single_song(song_data):
             try:
                 video_id = song_data['videoId']
                 url = song_data['url']
                 
-                # Skip if already enhanced
+                # Skip if already fully loaded
                 if not song_data.get('is_loading', False):
-                    return song_data
+                    # Check if we're missing critical data
+                    needs_enhancement = (
+                        song_data.get('duration') in ["Loading...", None, ""] or
+                        song_data.get('view_count') in ["Loading...", None, ""] or
+                        song_data.get('title') in ["Loading...", None, ""] or
+                        song_data.get('uploader') in ["Loading...", None, ""]
+                    )
+                    if not needs_enhancement:
+                        return song_data
                 
-                # Configure yt-dlp for fast extraction
+                print(f"[DEBUG] Enhancing song {video_id} with yt-dlp (fallback)...")
+                
+                # Only use yt-dlp as fallback for missing data
                 ydl_opts = {
                     'quiet': True,
                     'no_warnings': True,
@@ -236,7 +376,7 @@ class PlaylistScreen(ctk.CTkFrame):
                     'ignoreerrors': True,
                     'geo_bypass': True,
                     'noplaylist': True,
-                    'socket_timeout': 5,
+                    'socket_timeout': 8,
                     'retries': 1,
                     'no_check_certificate': True,
                     'extractor_args': {
@@ -250,56 +390,100 @@ class PlaylistScreen(ctk.CTkFrame):
                     info = ydl.extract_info(url, download=False)
                     
                     if info:
-                        # Update with full details
-                        duration_formatted = self.format_duration(info.get('duration', 0))
-                        enhanced_data = {
-                            'title': info.get('title', song_data['title'])[:100],
-                            'thumbnail_url': song_data['thumbnail_url'],  # Keep existing thumbnail URL
-                            'videoId': video_id,
-                            'uploader': info.get('uploader', song_data['uploader'])[:50],
-                            'duration': duration_formatted if duration_formatted else "Unknown",
-                            'view_count': self.format_views(info.get('view_count', 0)),
-                            'url': url,
-                            'is_loading': False
-                        }
+                        # Only update missing fields
+                        enhanced_data = song_data.copy()
+                        
+                        if enhanced_data.get('title') in ["Loading...", None, ""]:
+                            enhanced_data['title'] = info.get('title', 'Unknown Title')[:100]
+                        
+                        if enhanced_data.get('uploader') in ["Loading...", None, ""]:
+                            enhanced_data['uploader'] = info.get('uploader', 'Unknown')[:50]
+                        
+                        if enhanced_data.get('duration') in ["Loading...", None, ""]:
+                            duration_seconds = info.get('duration', 0)
+                            enhanced_data['duration'] = self.format_duration(duration_seconds)
+                        
+                        if enhanced_data.get('view_count') in ["Loading...", None, ""]:
+                            enhanced_data['view_count'] = self.format_views(info.get('view_count', 0))
+                        
+                        enhanced_data['is_loading'] = False
                         
                         # Cache the enhanced result
                         self.song_data_cache[video_id] = enhanced_data
                         return enhanced_data
                 
-                # If yt-dlp fails, return original data with loading flag removed
+                # If yt-dlp fails, mark as not loading and set defaults for missing fields
                 song_data['is_loading'] = False
+                if song_data.get('duration') in ["Loading...", None, ""]:
+                    song_data['duration'] = "0:00"
+                if song_data.get('view_count') in ["Loading...", None, ""]:
+                    song_data['view_count'] = "0 views"
+                if song_data.get('title') in ["Loading...", None, ""]:
+                    song_data['title'] = f"Video {video_id[:8]}"
+                if song_data.get('uploader') in ["Loading...", None, ""]:
+                    song_data['uploader'] = "Unknown"
+                
                 return song_data
                 
             except Exception as e:
                 print(f"Error enhancing song data for {song_data.get('videoId', 'unknown')}: {e}")
                 song_data['is_loading'] = False
+                # Set defaults for any missing fields
+                if song_data.get('duration') in ["Loading...", None, ""]:
+                    song_data['duration'] = "0:00"
+                if song_data.get('view_count') in ["Loading...", None, ""]:
+                    song_data['view_count'] = "0 views"
                 return song_data
         
-        # Process songs in parallel batches
-        enhanced_songs = []
-        batch_size = 5
+        # Filter songs that actually need enhancement
+        songs_needing_enhancement = [
+            song for song in song_data_list 
+            if song.get('is_loading', False) or 
+            song.get('duration') in ["Loading...", None, ""] or
+            song.get('view_count') in ["Loading...", None, ""]
+        ]
         
-        for i in range(0, len(song_data_list), batch_size):
-            batch = song_data_list[i:i + batch_size]
+        if not songs_needing_enhancement:
+            return song_data_list
+        
+        # Process only songs that need enhancement
+        enhanced_songs = song_data_list.copy()  # Start with original list
+        
+        # Process in smaller batches for better reliability
+        batch_size = 2
+        
+        for i in range(0, len(songs_needing_enhancement), batch_size):
+            batch = songs_needing_enhancement[i:i + batch_size]
             futures = []
             
             for song_data in batch:
                 future = self.executor.submit(enhance_single_song, song_data)
                 futures.append((future, song_data))
             
-            # Wait for batch completion and update UI progressively
+            # Wait for batch completion and update UI
             for future, original_song_data in futures:
                 try:
                     enhanced_song_data = future.result(timeout=10)
-                    enhanced_songs.append(enhanced_song_data)
                     
-                    # Update UI immediately for this song
+                    # Update the enhanced_songs list
+                    for j, song in enumerate(enhanced_songs):
+                        if song.get('videoId') == enhanced_song_data.get('videoId'):
+                            enhanced_songs[j] = enhanced_song_data
+                            break
+                    
+                    # Update UI immediately
                     self.after(0, lambda data=enhanced_song_data: self.update_song_card(data))
                     
                 except Exception as e:
                     print(f"Error processing song: {e}")
-                    enhanced_songs.append(original_song_data)
+                    # Update with defaults
+                    original_song_data['is_loading'] = False
+                    if original_song_data.get('duration') in ["Loading...", None, ""]:
+                        original_song_data['duration'] = "0:00"
+                    if original_song_data.get('view_count') in ["Loading...", None, ""]:
+                        original_song_data['view_count'] = "0 views"
+                    
+                    self.after(0, lambda data=original_song_data: self.update_song_card(data))
         
         return enhanced_songs
     
@@ -308,6 +492,8 @@ class PlaylistScreen(ctk.CTkFrame):
         video_id = song_data.get('videoId')
         if not video_id:
             return
+        
+        print(f"[DEBUG] Updating card for {video_id} with duration: {song_data.get('duration', 'N/A')}")
         
         # Find the card to update
         for card in self.cards:
@@ -321,31 +507,57 @@ class PlaylistScreen(ctk.CTkFrame):
                     if current_title != song_data['title'] and not song_data.get('is_loading', False):
                         card._title.configure(text=song_data['title'])
                 
-                # Update other details if they exist
-                content_frame = None
-                for child in card.winfo_children():
-                    if isinstance(child, ctk.CTkFrame) and child.cget("fg_color") == "transparent":
-                        content_frame = child
-                        break
-                
-                if content_frame:
-                    # Find and update details label
-                    for child in content_frame.winfo_children():
-                        if isinstance(child, ctk.CTkLabel) and child.cget("text_color") == "gray":
-                            # Update details
-                            details = []
-                            if song_data.get('uploader') and song_data['uploader'] not in ["Loading...", "Unknown"]:
-                                details.append(song_data['uploader'])
-                            if song_data.get('duration') and song_data['duration'] not in ["0:00", "Unknown"]:
-                                details.append(song_data['duration'])
-                            if song_data.get('view_count') and song_data['view_count'] not in ["Loading...", "0 views"]:
-                                details.append(song_data['view_count'])
-                            
-                            if details:
-                                details_text = " • ".join(details)
-                                child.configure(text=details_text)
+                # Update details label with improved logic
+                if hasattr(card, '_details_label') and card._details_label.winfo_exists():
+                    details = self.build_details_text(song_data)
+                    card._details_label.configure(text=details)
+                    print(f"[DEBUG] Updated details for {video_id}: {details}")
+                else:
+                    # Fallback: find details label manually
+                    content_frame = None
+                    for child in card.winfo_children():
+                        if isinstance(child, ctk.CTkFrame) and child.cget("fg_color") == "transparent":
+                            content_frame = child
                             break
+                    
+                    if content_frame:
+                        # Find and update details label
+                        for child in content_frame.winfo_children():
+                            if isinstance(child, ctk.CTkLabel) and child.cget("text_color") == "gray":
+                                details = self.build_details_text(song_data)
+                                child.configure(text=details)
+                                print(f"[DEBUG] Updated details text via fallback: {details}")
+                                break
                 break
+    
+    def build_details_text(self, song_data):
+        """Build the details text for a song card"""
+        details = []
+        
+        # Add uploader if available
+        uploader = song_data.get('uploader')
+        if uploader and uploader not in ["Loading...", "Unknown", ""]:
+            details.append(uploader)
+        
+        # Add duration if available - prioritize this
+        duration = song_data.get('duration')
+        if duration and duration not in ["Loading...", "0:00", ""]:
+            details.append(duration)
+        elif not song_data.get('is_loading', False):
+            # If not loading and no duration, add placeholder
+            details.append("Duration N/A")
+        
+        # Add view count if available
+        view_count = song_data.get('view_count')
+        if view_count and view_count not in ["Loading...", "0 views", ""]:
+            details.append(view_count)
+        
+        if details:
+            return " • ".join(details)
+        elif song_data.get('is_loading', False):
+            return "Loading details..."
+        else:
+            return "Details unavailable"
     
     def load_liked_songs(self):
         """Load liked songs with instant display and background enhancement"""
@@ -370,12 +582,15 @@ class PlaylistScreen(ctk.CTkFrame):
                     self.after(0, lambda: self.show_empty_state("No liked songs yet"))
                     return
                 
-                # Get instant basic data for all songs
+                # Get instant basic data for all songs in parallel
                 instant_song_data = []
-                for url in liked_urls:
-                    song_data = self.get_instant_song_data(url)
-                    if song_data:
-                        instant_song_data.append(song_data)
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    future_to_url = {executor.submit(self.get_instant_song_data, url): url for url in liked_urls}
+                    for future in as_completed(future_to_url):
+                        song_data = future.result()
+                        if song_data:
+                            instant_song_data.append(song_data)
                 
                 print(f"[DEBUG] Got instant data for {len(instant_song_data)} songs")
                 
@@ -441,10 +656,10 @@ class PlaylistScreen(ctk.CTkFrame):
     def format_duration(self, seconds):
         """Format duration in seconds to MM:SS or HH:MM:SS"""
         if not seconds or seconds <= 0:
-            return None  # Return None instead of "0:00" so we can handle it properly
+            return "0:00"
         
         try:
-            seconds = int(float(seconds))  # Handle both int and float, and string numbers
+            seconds = int(float(seconds))  # Handle string/float inputs
             minutes, secs = divmod(seconds, 60)
             hours, minutes = divmod(minutes, 60)
             
@@ -453,19 +668,23 @@ class PlaylistScreen(ctk.CTkFrame):
             else:
                 return f"{minutes}:{secs:02d}"
         except (ValueError, TypeError):
-            return None
+            return "0:00"
     
     def format_views(self, view_count):
         """Format view count to readable format"""
         if not view_count or view_count <= 0:
             return "0 views"
         
-        if view_count >= 1_000_000:
-            return f"{view_count // 100000 / 10:.1f}M views"
-        elif view_count >= 1_000:
-            return f"{view_count // 100 / 10:.1f}K views"
-        else:
-            return f"{view_count} views"
+        try:
+            view_count = int(view_count)
+            if view_count >= 1_000_000:
+                return f"{view_count // 100000 / 10:.1f}M views"
+            elif view_count >= 1_000:
+                return f"{view_count // 100 / 10:.1f}K views"
+            else:
+                return f"{view_count} views"
+        except (ValueError, TypeError):
+            return "0 views"
     
     def show_loading_state(self):
         """Show loading state while fetching songs"""
@@ -602,6 +821,7 @@ class PlaylistScreen(ctk.CTkFrame):
         
         # Store card reference and song data
         card._title = None  # Will store the title widget reference
+        card._details_label = None  # Will store the details widget reference
         card._song_data = song_data  # Store song data with the card
         
         # Configure grid for the card to take full width
@@ -659,19 +879,8 @@ class PlaylistScreen(ctk.CTkFrame):
         # Store title reference on card for later updates
         card._title = title
         
-        # Additional info (uploader, duration, views)
-        details = []
-        if song_data.get('uploader') and song_data['uploader'] not in ["Loading...", "Unknown"]:
-            details.append(song_data['uploader'])
-        if song_data.get('duration') and song_data['duration'] not in ["0:00", "Unknown"]:
-            details.append(song_data['duration'])
-        if song_data.get('view_count') and song_data['view_count'] not in ["Loading...", "0 views"]:
-            details.append(song_data['view_count'])
-            
-        if details:
-            details_text = " • ".join(details)
-        else:
-            details_text = "Loading details..." if song_data.get('is_loading', False) else "No details available"
+        # Build details text using the improved method
+        details_text = self.build_details_text(song_data)
             
         details_label = ctk.CTkLabel(
             content_frame,
@@ -682,6 +891,9 @@ class PlaylistScreen(ctk.CTkFrame):
             justify="left"
         )
         details_label.grid(row=1, column=0, sticky="nsw")
+        
+        # Store details label reference for updates
+        card._details_label = details_label
         
         # Unlike/Remove button (different behavior for Saved Songs vs custom playlists)
         if self.playlist_name == "Saved Songs":
