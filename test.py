@@ -597,9 +597,507 @@ class App(ctk.CTk):
         
         # Add welcome content below banner
         welcome_frame = ctk.CTkFrame(container, fg_color="#1a1a1a", corner_radius=10)
-        welcome_frame.pack(fill="both", expand=True, pady=10)
+        welcome_frame.pack(fill="x", pady=10)
         
+        # Add playlist section
+        self.create_playlist_section(welcome_frame)
         
+
+    def create_playlist_section(self, parent_frame):
+        """Create the playlist cards section"""
+        # Initialize playlists if not exists
+        if not hasattr(self, 'playlists'):
+            self.playlists = [
+                {"name": "Saved Songs", "songs": [], "is_default": True}
+            ]
+            self.next_playlist_number = 1
+        
+        # Playlist section header
+        header_frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=20, pady=(20, 10))
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            header_frame,
+            text="Your Playlists",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="#1DB954"
+        )
+        title_label.pack(side="left")
+        
+        # Add playlist button
+        add_btn = ctk.CTkButton(
+            header_frame,
+            text="+ New Playlist",
+            font=ctk.CTkFont(size=14),
+            fg_color="#1DB954",
+            hover_color="#1ed760",
+            command=self.add_new_playlist,
+            width=120,
+            height=32
+        )
+        add_btn.pack(side="right")
+        
+        # Playlist cards container - store reference for smooth refresh
+        self.playlist_cards_frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
+        self.playlist_cards_frame.pack(fill="x", padx=20, pady=(0, 10))
+        
+        # Create playlist cards
+        self.create_playlist_cards(self.playlist_cards_frame)
+    
+    def refresh_playlist_cards(self):
+        """Smoothly refresh only the playlist cards without affecting the banner"""
+        if hasattr(self, 'playlist_cards_frame'):
+            self.create_playlist_cards(self.playlist_cards_frame)
+
+    def create_playlist_cards(self, parent_frame):
+        """Create individual playlist cards"""
+        # Clear existing cards
+        for widget in parent_frame.winfo_children():
+            widget.destroy()
+        
+        # Create a horizontal scrollable frame for cards
+        canvas = ctk.CTkCanvas(parent_frame, bg="#1a1a1a", highlightthickness=0)
+        scrollbar = ctk.CTkScrollbar(parent_frame, orientation="horizontal", command=canvas.xview)
+        scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(xscrollcommand=scrollbar.set)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="top", fill="x", expand=False)
+        scrollbar.pack(side="bottom", fill="x")
+        
+        # Create cards in a single row layout
+        for i, playlist in enumerate(self.playlists):
+            # Create playlist card
+            card = self.create_playlist_card(scrollable_frame, playlist, i)
+            card.pack(side="left", padx=10, pady=10)
+        
+        # Update scroll region and check if scrollbar is needed
+        def update_scroll_region():
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            
+            # Check if content is wider than canvas
+            content_width = scrollable_frame.winfo_reqwidth()
+            canvas_width = canvas.winfo_width()
+            
+            if content_width > canvas_width:
+                # Show scrollbar only when needed
+                scrollbar.pack(side="bottom", fill="x")
+            else:
+                # Hide scrollbar when not needed
+                scrollbar.pack_forget()
+        
+        # Bind mouse wheel to horizontal scroll with bounds checking
+        def _on_mousewheel(event):
+            # Get current scroll position
+            current_pos = canvas.xview()[0]
+            
+            # Calculate scroll amount
+            scroll_amount = int(-1*(event.delta/120))
+            
+            # Only allow scrolling right (positive) when at the beginning
+            if current_pos <= 0 and scroll_amount < 0:
+                return
+            
+            # Only allow scrolling left (negative) when not at the end
+            if current_pos >= 1 and scroll_amount > 0:
+                return
+            
+            canvas.xview_scroll(scroll_amount, "units")
+        
+        # Update scroll region after a short delay to ensure proper sizing
+        canvas.after(100, update_scroll_region)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    
+    def create_playlist_card(self, parent, playlist, index):
+        """Create a single playlist card"""
+        card = ctk.CTkFrame(parent, fg_color="#2a2a2a", corner_radius=10, height=220, width=200)
+        card.pack_propagate(False)
+        
+        # Card content
+        content_frame = ctk.CTkFrame(card, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Playlist icon
+        icon_label = ctk.CTkLabel(
+            content_frame,
+            text="🎵" if playlist["is_default"] else "📁",
+            font=ctk.CTkFont(size=40),
+            text_color="#1DB954" if playlist["is_default"] else "#FFFFFF"
+        )
+        icon_label.pack(pady=(0, 15))
+        
+        # Playlist name and edit button container
+        name_container = ctk.CTkFrame(content_frame, fg_color="transparent")
+        name_container.pack(fill="x", pady=(0, 8))
+        
+        # Playlist name
+        name_label = ctk.CTkLabel(
+            name_container,
+            text=playlist["name"],
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        name_label.pack(side="left", fill="x", expand=True)
+        
+        # Edit button (only for non-default playlists)
+        if not playlist["is_default"]:
+            edit_btn = ctk.CTkButton(
+                name_container,
+                text="✏",
+                width=25,
+                height=25,
+                font=ctk.CTkFont(size=12),
+                fg_color="#444444",
+                hover_color="#555555",
+                command=lambda: self.start_inline_edit(card, playlist, index)
+            )
+            edit_btn.pack(side="right", padx=(5, 0))
+        
+        # Song count
+        song_count = len(playlist["songs"])
+        count_label = ctk.CTkLabel(
+            content_frame,
+            text=f"{song_count} song{'s' if song_count != 1 else ''}",
+            font=ctk.CTkFont(size=14),
+            text_color="#888888"
+        )
+        count_label.pack(pady=(0, 15))
+        
+        # Action buttons
+        button_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        button_frame.pack(fill="x")
+        
+        # Play button
+        play_btn = ctk.CTkButton(
+            button_frame,
+            text="▶",
+            width=35,
+            height=35,
+            font=ctk.CTkFont(size=16),
+            fg_color="#1DB954",
+            hover_color="#1ed760",
+            command=lambda: self.play_playlist(index)
+        )
+        play_btn.pack(side="left", padx=(0, 8))
+        
+        # Delete button (only for non-default playlists)
+        if not playlist["is_default"]:
+            delete_btn = ctk.CTkButton(
+                button_frame,
+                text="🗑",
+                width=35,
+                height=35,
+                font=ctk.CTkFont(size=16),
+                fg_color="#FF6B6B",
+                hover_color="#FF5252",
+                command=lambda: self.delete_playlist(index)
+            )
+            delete_btn.pack(side="left")
+        
+        return card
+
+    def start_inline_edit(self, card, playlist, index):
+        """Start inline editing of playlist name"""
+        # Find the name container in the card
+        content_frame = card.winfo_children()[0]  # Get the content frame
+        name_container = None
+        
+        # Find the name container
+        for widget in content_frame.winfo_children():
+            if isinstance(widget, ctk.CTkFrame) and len(widget.winfo_children()) > 0:
+                if isinstance(widget.winfo_children()[0], ctk.CTkLabel):
+                    name_container = widget
+                    break
+        
+        if not name_container:
+            return
+        
+        # Clear the name container
+        for widget in name_container.winfo_children():
+            widget.destroy()
+        
+        # Create entry field
+        entry = ctk.CTkEntry(
+            name_container,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            fg_color="#333333",
+            text_color="#FFFFFF",
+            border_color="#1DB954",
+            border_width=2
+        )
+        entry.pack(side="left", fill="x", expand=True)
+        entry.insert(0, playlist["name"])
+        entry.select_range(0, 'end')
+        entry.focus_set()
+        
+        # Create save button
+        save_btn = ctk.CTkButton(
+            name_container,
+            text="✓",
+            width=80,
+            height=25,
+            font=ctk.CTkFont(size=16),
+            fg_color="#1DB954",
+            hover_color="#1ed760",
+            command=lambda: self.save_inline_edit(card, playlist, index, entry)
+        )
+        save_btn.pack(side="right", padx=(3, 0))
+        
+        # Bind Enter key to save
+        def on_enter(event):
+            self.save_inline_edit(card, playlist, index, entry)
+        
+        entry.bind('<Return>', on_enter)
+        
+        # Bind Escape key to cancel
+        def on_escape(event):
+            self.cancel_inline_edit(card, playlist, index)
+        
+        entry.bind('<Escape>', on_escape)
+
+    def save_inline_edit(self, card, playlist, index, entry):
+        """Save the inline edit"""
+        new_name = entry.get().strip()
+        if new_name and new_name != playlist["name"]:
+            playlist["name"] = new_name
+            self.refresh_playlist_cards()
+        else:
+            # If no change or empty name, just cancel
+            self.cancel_inline_edit(card, playlist, index)
+
+    def cancel_inline_edit(self, card, playlist, index):
+        """Cancel the inline edit and restore original name"""
+        self.refresh_playlist_cards()
+    
+    def add_new_playlist(self):
+        """Add a new playlist"""
+        playlist_name = f"Playlist {self.next_playlist_number}"
+        new_playlist = {
+            "name": playlist_name,
+            "songs": [],
+            "is_default": False
+        }
+        self.playlists.append(new_playlist)
+        self.next_playlist_number += 1
+        
+        # Smoothly refresh only the playlist cards
+        self.refresh_playlist_cards()
+    
+    def edit_playlist_name(self, index):
+        """Edit playlist name"""
+        if index >= len(self.playlists) or self.playlists[index]["is_default"]:
+            return
+        
+        # Create a simple dialog for editing
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Edit Playlist Name")
+        dialog.geometry("300x150")
+        dialog.resizable(False, False)
+        
+        # Center the dialog
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Entry for new name
+        entry = ctk.CTkEntry(
+            dialog,
+            placeholder_text="Enter playlist name",
+            width=250
+        )
+        entry.pack(pady=20)
+        entry.insert(0, self.playlists[index]["name"])
+        entry.focus_set()
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        
+        def save_name():
+            new_name = entry.get().strip()
+            if new_name:
+                self.playlists[index]["name"] = new_name
+                self.refresh_playlist_cards()
+            dialog.destroy()
+        
+        def cancel():
+            dialog.destroy()
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Save",
+            command=save_name,
+            fg_color="#1DB954"
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=cancel,
+            fg_color="#666666"
+        ).pack(side="left", padx=5)
+    
+    def delete_playlist(self, index):
+        """Delete a playlist"""
+        if index >= len(self.playlists) or self.playlists[index]["is_default"]:
+            return
+        
+        # Remove the playlist
+        self.playlists.pop(index)
+        
+        # Smoothly refresh only the playlist cards
+        self.refresh_playlist_cards()
+    
+    def play_playlist(self, index):
+        """Play a playlist"""
+        if index >= len(self.playlists):
+            return
+        
+        playlist = self.playlists[index]
+        if not playlist["songs"]:
+            # Show empty playlist message
+            print(f"Playlist '{playlist['name']}' is empty")
+            return
+        
+        # Set current playlist and start playing
+        self.current_playlist = playlist["songs"]
+        self.current_song_index = 0
+        
+        # Show music player with first song
+        if playlist["songs"]:
+            first_song = playlist["songs"][0]
+            self.on_song_selected(first_song, playlist["songs"], 0)
+    
+    def add_song_to_playlist(self, song_data, playlist_index=None):
+        """Add a song to a playlist"""
+        if playlist_index is None:
+            # Add to "Saved Songs" (index 0)
+            playlist_index = 0
+        
+        if playlist_index >= len(self.playlists):
+            return False
+        
+        # Check if song already exists in playlist
+        song_url = song_data.get('url', '')
+        for existing_song in self.playlists[playlist_index]["songs"]:
+            if existing_song.get('url') == song_url:
+                print(f"Song already exists in playlist '{self.playlists[playlist_index]['name']}'")
+                return False
+        
+        # Add song to playlist
+        self.playlists[playlist_index]["songs"].append(song_data)
+        print(f"Added song to playlist '{self.playlists[playlist_index]['name']}'")
+        
+        # Smoothly refresh only the playlist cards
+        self.refresh_playlist_cards()
+        return True
+    
+    def show_add_to_playlist_dialog(self, song_data):
+        """Show dialog to choose which playlist to add song to"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Add to Playlist")
+        dialog.geometry("400x300")
+        dialog.resizable(False, False)
+        
+        # Center the dialog
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            dialog,
+            text="Choose a playlist:",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        title_label.pack(pady=20)
+        
+        # Create scrollable frame for playlist options
+        canvas = ctk.CTkCanvas(dialog, bg="#1a1a1a", highlightthickness=0, height=200)
+        scrollbar = ctk.CTkScrollbar(dialog, orientation="vertical", command=canvas.yview)
+        scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=20)
+        scrollbar.pack(side="right", fill="y", padx=(0, 20))
+        
+        # Create playlist options
+        for i, playlist in enumerate(self.playlists):
+            playlist_frame = ctk.CTkFrame(scrollable_frame, fg_color="#2a2a2a", corner_radius=5)
+            playlist_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Playlist info
+            info_frame = ctk.CTkFrame(playlist_frame, fg_color="transparent")
+            info_frame.pack(fill="x", padx=10, pady=5)
+            
+            name_label = ctk.CTkLabel(
+                info_frame,
+                text=playlist["name"],
+                font=ctk.CTkFont(size=14, weight="bold"),
+                text_color="#FFFFFF"
+            )
+            name_label.pack(side="left")
+            
+            count_label = ctk.CTkLabel(
+                info_frame,
+                text=f"({len(playlist['songs'])} songs)",
+                font=ctk.CTkFont(size=12),
+                text_color="#888888"
+            )
+            count_label.pack(side="right")
+            
+            # Add button
+            add_btn = ctk.CTkButton(
+                playlist_frame,
+                text="Add",
+                font=ctk.CTkFont(size=12),
+                fg_color="#1DB954",
+                hover_color="#1ed760",
+                command=lambda idx=i: self.add_song_to_playlist_and_close(song_data, idx, dialog),
+                width=60,
+                height=25
+            )
+            add_btn.pack(pady=(0, 5))
+    
+    def add_song_to_playlist_and_close(self, song_data, playlist_index, dialog):
+        """Add song to playlist and close dialog"""
+        success = self.add_song_to_playlist(song_data, playlist_index)
+        if success:
+            dialog.destroy()
+            # Show success message
+            self.show_success_message(f"Added to '{self.playlists[playlist_index]['name']}'")
+    
+    def show_success_message(self, message):
+        """Show a temporary success message"""
+        # Create a temporary message overlay
+        msg_frame = ctk.CTkFrame(self, fg_color="#1DB954", corner_radius=10)
+        msg_frame.place(relx=0.5, rely=0.1, anchor="center")
+        
+        msg_label = ctk.CTkLabel(
+            msg_frame,
+            text=message,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        msg_label.pack(padx=20, pady=10)
+        
+        # Auto-hide after 2 seconds
+        self.after(2000, msg_frame.destroy)
 
     def clear_searchbar(self):
         self.searchbar.delete(0, 'end')
