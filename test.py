@@ -158,7 +158,6 @@ class App(ctk.CTk):
         # Menu items
         menu_items = [
             ("🏠 Home", self.on_home_clicked),
-            ("🎵 My Liked Songs", self.on_liked_songs_clicked),
             ("⚙️ Settings", self.on_settings_clicked),
             ("ℹ️ About", self.on_about_clicked),
             ("📞 Contact", self.on_contact_clicked),
@@ -263,63 +262,7 @@ class App(ctk.CTk):
         self.hide_side_menu()
         self.show_main_frame()
         print("Home clicked")
-    
-    def on_liked_songs_clicked(self):
-        """Handle liked songs menu item click"""
-        self.hide_side_menu()
-        if self.logged_in:
-            # Show liked songs
-            self.show_liked_songs()
-        else:
-            # Show login prompt
-            self.on_login_clicked()
-        print("Liked songs clicked")
-    
-    def show_liked_songs(self):
-        """Show user's liked songs"""
-        if not self.logged_in:
-            return
-        
-        # Clear main frame
-        for widget in self.main_frame.winfo_children():
-            widget.destroy()
-        
-        # Get liked songs from Firebase
-        firebase = FirebaseManager()
-        liked_urls = firebase.get_user_liked_songs(self.current_user)
-        
-        if not liked_urls:
-            # Show empty state
-            empty_label = ctk.CTkLabel(
-                self.main_frame,
-                text="No liked songs yet.\nSearch for songs and like them to see them here!",
-                font=ctk.CTkFont(size=18),
-                text_color="gray"
-            )
-            empty_label.pack(expand=True)
-            return
-        
-        # Convert URLs to song data format
-        liked_songs = []
-        for url in liked_urls:
-            # Extract video ID from URL
-            if "youtube.com/watch?v=" in url:
-                video_id = url.split("v=")[1].split("&")[0]
-                liked_songs.append({
-                    'videoId': video_id,
-                    'title': f"Liked Song ({video_id})",
-                    'uploader': 'Unknown',
-                    'duration': '0:00',
-                    'view_count': '0 views',
-                    'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                    'url': url
-                })
-        
-        # Display liked songs
-        self.search_screen = SearchScreen(self.main_frame, liked_songs, None, self.current_user)
-        self.search_screen.pack(fill="both", expand=True)
-        self.search_screen.set_song_selection_callback(self.on_song_selected)
-    
+
     def on_settings_clicked(self):
         """Handle settings menu item click"""
         self.hide_side_menu()
@@ -884,8 +827,15 @@ class App(ctk.CTk):
             )
             edit_btn.pack(side="right", padx=(5, 0))
         
-        # Song count
-        song_count = len(playlist["songs"])
+        # Song count - use Firebase for "Saved Songs", local count for other playlists
+        if playlist["is_default"] and self.logged_in:
+            # Get count from Firebase for "Saved Songs"
+            firebase = FirebaseManager()
+            song_count = firebase.get_saved_songs_count(self.current_user)
+        else:
+            # Use local count for other playlists
+            song_count = len(playlist["songs"])
+        
         count_label = ctk.CTkLabel(
             content_frame,
             text=f"{song_count} song{'s' if song_count != 1 else ''}",
@@ -925,7 +875,25 @@ class App(ctk.CTk):
             )
             delete_btn.pack(side="left")
         
+        # Add double-click functionality for "Saved Songs" playlist
+        if playlist["is_default"] and self.logged_in:
+            card.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+        
         return card
+
+    def show_saved_songs_playlist(self):
+        """Show saved songs playlist using PlaylistScreen"""
+        if not self.logged_in:
+            return
+        
+        # Clear main frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        
+        # Create and display PlaylistScreen
+        from playlistscreen import PlaylistScreen
+        self.playlist_screen = PlaylistScreen(self.main_frame, self.current_user, self.on_song_selected)
+        self.playlist_screen.pack(fill="both", expand=True)
 
     def start_inline_edit(self, card, playlist, index):
         """Start inline editing of playlist name"""
@@ -1222,13 +1190,21 @@ class App(ctk.CTk):
         self.after(2000, msg_frame.destroy)
 
     def clear_searchbar(self):
+        # Check if search bar has content before clearing
+        current_content = self.searchbar.get().strip()
+        
+        # Clear the search bar
         self.searchbar.delete(0, 'end')
+        
         # Cancel any pending searches
         if self.after_id:
             self.after_cancel(self.after_id)
         if self.current_search_future and not self.current_search_future.done():
             self.current_search_future.cancel()
-        self.show_main_frame()
+        
+        # Only reload the screen if the search bar had content
+        if current_content:
+            self.show_main_frame()
 
     @lru_cache(maxsize=1)
     def load_search_icon(self):
