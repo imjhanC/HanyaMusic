@@ -333,3 +333,30 @@ class FirebaseManager:
         except Exception as e:
             print(f"Error toggling song like: {str(e)}")
             return False, False, f"Error: {str(e)}"
+
+    def get_saved_songs_count(self, username: str) -> int:
+        """Get the count of saved songs for a user.
+        
+        Args:
+            username: Username of the user
+            
+        Returns:
+            int: Number of saved songs (liked songs count)
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            
+            # Query for user's liked songs
+            liked_songs_ref = self.db.collection('liked_songs')
+            user_docs = liked_songs_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                liked_urls = user_data.get('liked_urls', [])
+                return len(liked_urls)
+            
+            return 0
+            
+        except Exception as e:
+            print(f"Error getting saved songs count: {str(e)}")
+            return 0
