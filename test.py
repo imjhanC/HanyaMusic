@@ -104,7 +104,7 @@ class App(ctk.CTk):
         self.side_menu = ctk.CTkFrame(
             self,
             width=300,
-            fg_color="#1a1a1a",
+            fg_color="#0f0f0f",
             corner_radius=0
         )
         
@@ -599,41 +599,7 @@ class App(ctk.CTk):
         welcome_frame = ctk.CTkFrame(container, fg_color="#1a1a1a", corner_radius=10)
         welcome_frame.pack(fill="both", expand=True, pady=10)
         
-        # Welcome message
-        welcome_label = ctk.CTkLabel(
-            welcome_frame,
-            text="Welcome to HanyaMusic! 🎵",
-            font=ctk.CTkFont(size=24, weight="bold"),
-            text_color="#1DB954"
-        )
-        welcome_label.pack(pady=20)
         
-        # Features list
-        features_text = """
-    🎵 Search for your favorite songs
-    🎶 Create and manage playlists  
-    ❤️ Like and save your favorite tracks
-    🔊 High-quality audio streaming
-    🌙 Beautiful time-based themes
-        """
-        
-        features_label = ctk.CTkLabel(
-            welcome_frame,
-            text=features_text,
-            font=ctk.CTkFont(size=16),
-            text_color="white",
-            justify="left"
-        )
-        features_label.pack(pady=10)
-        
-        # Search prompt
-        search_prompt = ctk.CTkLabel(
-            welcome_frame,
-            text="Start by searching for a song in the search bar above! 🔍",
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color="#4dff9d"
-        )
-        search_prompt.pack(pady=20)
 
     def clear_searchbar(self):
         self.searchbar.delete(0, 'end')
