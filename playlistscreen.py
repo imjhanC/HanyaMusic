@@ -4,6 +4,9 @@ import requests
 from io import BytesIO
 import threading
 import yt_dlp
+import re
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from playerClass import MusicPlayerContainer
 from FirebaseClass import FirebaseManager
 
@@ -28,6 +31,9 @@ class PlaylistScreen(ctk.CTkFrame):
         # Song data cache
         self.song_data_cache = {}
         self.loading_songs = False
+        
+        # Thread pool for parallel processing
+        self.executor = ThreadPoolExecutor(max_workers=5)
         
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -157,11 +163,193 @@ class PlaylistScreen(ctk.CTkFrame):
         self.cards = []
         print("[DEBUG] create_content_area completed")
     
+    def extract_video_id(self, url):
+        """Extract video ID from various YouTube URL formats"""
+        patterns = [
+            r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+            r'youtube\.com/watch\?.*v=([a-zA-Z0-9_-]{11})',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
+    
+    def get_instant_song_data(self, url):
+        """Extract basic song info instantly from URL and YouTube's basic API"""
+        try:
+            video_id = self.extract_video_id(url)
+            if not video_id:
+                return None
+            
+            # Check cache first
+            if video_id in self.song_data_cache:
+                return self.song_data_cache[video_id]
+            
+            # Create basic song data with video ID
+            song_data = {
+                'title': "Loading...",
+                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
+                'videoId': video_id,
+                'uploader': "Loading...",
+                'duration': "Loading...",
+                'view_count': "Loading...",
+                'url': url,
+                'is_loading': True
+            }
+            
+            # Try to get basic info from YouTube's oEmbed API (very fast)
+            try:
+                oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+                response = requests.get(oembed_url, timeout=2)
+                if response.status_code == 200:
+                    data = response.json()
+                    song_data['title'] = data.get('title', 'Unknown Title')[:100]
+                    song_data['uploader'] = data.get('author_name', 'Unknown')[:50]
+            except Exception as e:
+                print(f"oEmbed failed for {video_id}: {e}")
+            
+            return song_data
+                
+        except Exception as e:
+            print(f"Error extracting instant song data from URL {url}: {e}")
+            return None
+    
+    def enhance_song_data_batch(self, song_data_list):
+        """Enhance multiple songs with full metadata using parallel processing"""
+        def enhance_single_song(song_data):
+            try:
+                video_id = song_data['videoId']
+                url = song_data['url']
+                
+                # Skip if already enhanced
+                if not song_data.get('is_loading', False):
+                    return song_data
+                
+                # Configure yt-dlp for fast extraction
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': False,
+                    'skip_download': True,
+                    'ignoreerrors': True,
+                    'geo_bypass': True,
+                    'noplaylist': True,
+                    'socket_timeout': 5,
+                    'retries': 1,
+                    'no_check_certificate': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'skip': ['dash', 'hls'],
+                        }
+                    }
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                    if info:
+                        # Update with full details
+                        duration_formatted = self.format_duration(info.get('duration', 0))
+                        enhanced_data = {
+                            'title': info.get('title', song_data['title'])[:100],
+                            'thumbnail_url': song_data['thumbnail_url'],  # Keep existing thumbnail URL
+                            'videoId': video_id,
+                            'uploader': info.get('uploader', song_data['uploader'])[:50],
+                            'duration': duration_formatted if duration_formatted else "Unknown",
+                            'view_count': self.format_views(info.get('view_count', 0)),
+                            'url': url,
+                            'is_loading': False
+                        }
+                        
+                        # Cache the enhanced result
+                        self.song_data_cache[video_id] = enhanced_data
+                        return enhanced_data
+                
+                # If yt-dlp fails, return original data with loading flag removed
+                song_data['is_loading'] = False
+                return song_data
+                
+            except Exception as e:
+                print(f"Error enhancing song data for {song_data.get('videoId', 'unknown')}: {e}")
+                song_data['is_loading'] = False
+                return song_data
+        
+        # Process songs in parallel batches
+        enhanced_songs = []
+        batch_size = 5
+        
+        for i in range(0, len(song_data_list), batch_size):
+            batch = song_data_list[i:i + batch_size]
+            futures = []
+            
+            for song_data in batch:
+                future = self.executor.submit(enhance_single_song, song_data)
+                futures.append((future, song_data))
+            
+            # Wait for batch completion and update UI progressively
+            for future, original_song_data in futures:
+                try:
+                    enhanced_song_data = future.result(timeout=10)
+                    enhanced_songs.append(enhanced_song_data)
+                    
+                    # Update UI immediately for this song
+                    self.after(0, lambda data=enhanced_song_data: self.update_song_card(data))
+                    
+                except Exception as e:
+                    print(f"Error processing song: {e}")
+                    enhanced_songs.append(original_song_data)
+        
+        return enhanced_songs
+    
+    def update_song_card(self, song_data):
+        """Update a specific song card with enhanced data"""
+        video_id = song_data.get('videoId')
+        if not video_id:
+            return
+        
+        # Find the card to update
+        for card in self.cards:
+            if hasattr(card, '_song_data') and card._song_data.get('videoId') == video_id:
+                # Update the stored song data
+                card._song_data = song_data
+                
+                # Update the title if it exists and has changed
+                if hasattr(card, '_title') and card._title.winfo_exists():
+                    current_title = card._title.cget("text")
+                    if current_title != song_data['title'] and not song_data.get('is_loading', False):
+                        card._title.configure(text=song_data['title'])
+                
+                # Update other details if they exist
+                content_frame = None
+                for child in card.winfo_children():
+                    if isinstance(child, ctk.CTkFrame) and child.cget("fg_color") == "transparent":
+                        content_frame = child
+                        break
+                
+                if content_frame:
+                    # Find and update details label
+                    for child in content_frame.winfo_children():
+                        if isinstance(child, ctk.CTkLabel) and child.cget("text_color") == "gray":
+                            # Update details
+                            details = []
+                            if song_data.get('uploader') and song_data['uploader'] not in ["Loading...", "Unknown"]:
+                                details.append(song_data['uploader'])
+                            if song_data.get('duration') and song_data['duration'] not in ["0:00", "Unknown"]:
+                                details.append(song_data['duration'])
+                            if song_data.get('view_count') and song_data['view_count'] not in ["Loading...", "0 views"]:
+                                details.append(song_data['view_count'])
+                            
+                            if details:
+                                details_text = " • ".join(details)
+                                child.configure(text=details_text)
+                            break
+                break
+    
     def load_liked_songs(self):
-        """Load liked songs from Firebase - instant loading with full details"""
+        """Load liked songs with instant display and background enhancement"""
         print(f"[DEBUG] load_liked_songs called")
-        print(f"[DEBUG] current_user: {self.current_user}")
-        print(f"[DEBUG] firebase_manager: {self.firebase_manager}")
         
         if not self.current_user or not self.firebase_manager:
             print("[DEBUG] User not logged in or no firebase manager")
@@ -169,227 +357,103 @@ class PlaylistScreen(ctk.CTkFrame):
             return
         
         print("[DEBUG] Showing loading state...")
-        # Show loading state
         self.show_loading_state()
         
-        # Load liked URLs and get full details instantly
-        def load_songs_instant():
-            print("[DEBUG] load_songs_instant started")
+        def load_songs_instantly():
+            print("[DEBUG] load_songs_instantly started")
             try:
-                print(f"[DEBUG] Calling firebase_manager.get_user_liked_songs({self.current_user})")
+                # Get liked URLs from Firebase
                 liked_urls = self.firebase_manager.get_user_liked_songs(self.current_user)
-                print(f"[DEBUG] liked_urls: {liked_urls}")
+                print(f"[DEBUG] Got {len(liked_urls) if liked_urls else 0} liked URLs")
                 
                 if not liked_urls:
-                    print("[DEBUG] No liked URLs found")
                     self.after(0, lambda: self.show_empty_state("No liked songs yet"))
                     return
                 
-                # Process URLs to get full song data instantly
-                song_data_list = []
+                # Get instant basic data for all songs
+                instant_song_data = []
                 for url in liked_urls:
-                    print(f"[DEBUG] Processing URL: {url}")
-                    song_data = self.get_song_data_from_url_fast(url)
+                    song_data = self.get_instant_song_data(url)
                     if song_data:
-                        song_data_list.append(song_data)
-                        print(f"[DEBUG] Added song data: {song_data.get('title', 'Unknown')}")
-                    else:
-                        print(f"[DEBUG] Failed to get song data for URL: {url}")
+                        instant_song_data.append(song_data)
                 
-                print(f"[DEBUG] Final song_data_list length: {len(song_data_list)}")
-                # Update UI with song data
-                self.after(0, lambda: self.display_songs(song_data_list))
+                print(f"[DEBUG] Got instant data for {len(instant_song_data)} songs")
+                
+                # Display instantly
+                self.after(0, lambda: self.display_songs(instant_song_data))
+                
+                # Start background enhancement
+                if instant_song_data:
+                    threading.Thread(
+                        target=lambda: self.enhance_song_data_batch(instant_song_data),
+                        daemon=True
+                    ).start()
                 
             except Exception as e:
-                print(f"[DEBUG] Error in load_songs_instant: {e}")
+                print(f"[DEBUG] Error in load_songs_instantly: {e}")
                 import traceback
                 traceback.print_exc()
                 self.after(0, lambda: self.show_error_state("Failed to load liked songs"))
         
-        # Run instant loading
-        load_songs_instant()
-
-    def get_song_data_from_url_fast(self, url):
-        """Extract song data from YouTube URL using optimized yt-dlp settings"""
-        try:
-            # Extract video ID from URL
-            if 'youtube.com/watch?v=' in url:
-                video_id = url.split('v=')[1].split('&')[0]
-            else:
-                return None
-            
-            # Check cache first
-            if video_id in self.song_data_cache:
-                return self.song_data_cache[video_id]
-            
-            # Configure yt-dlp options for fast extraction
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,  # Get full info
-                'skip_download': True,
-                'ignoreerrors': True,
-                'geo_bypass': True,
-                'noplaylist': True,
-                'socket_timeout': 3,  # Very short timeout
-                'retries': 0,  # No retries for speed
-                'no_check_certificate': True,  # Skip certificate check
-                'extractor_args': {
-                    'youtube': {
-                        'skip': ['dash', 'hls'],  # Skip some formats
-                    }
-                }
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    return None
-                
-                # Create song data object with full details
-                song_data = {
-                    'title': info.get('title', 'Unknown Title')[:100],
-                    'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                    'videoId': video_id,
-                    'uploader': info.get('uploader', 'Unknown')[:50],
-                    'duration': self.format_duration(info.get('duration', 0)),
-                    'view_count': self.format_views(info.get('view_count', 0)),
-                    'url': url
-                }
-                
-                # Cache the result
-                self.song_data_cache[video_id] = song_data
-                return song_data
-                
-        except Exception as e:
-            print(f"Error extracting song data from URL {url}: {e}")
-            # Return basic data if yt-dlp fails
-            return self.get_basic_song_data_from_url(url)
-
-    def get_basic_song_data_from_url(self, url):
-        """Extract basic song data from YouTube URL as fallback"""
-        try:
-            # Extract video ID from URL
-            if 'youtube.com/watch?v=' in url:
-                video_id = url.split('v=')[1].split('&')[0]
-            else:
-                return None
-            
-            # Create basic song data object
-            song_data = {
-                'title': f"Video {video_id}",
-                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                'videoId': video_id,
-                'uploader': "Unknown",
-                'duration': "0:00",
-                'view_count': "0 views",
-                'url': url
-            }
-            
-            return song_data
-                
-        except Exception as e:
-            print(f"Error extracting basic song data from URL {url}: {e}")
-            return None
+        # Start loading in background thread
+        threading.Thread(target=load_songs_instantly, daemon=True).start()
 
     def load_playlist_songs(self, playlist_data):
-        """Load songs from a specific playlist"""
+        """Load songs from a specific playlist with instant display"""
         if not playlist_data or not playlist_data.get('songs'):
             self.show_empty_state("This playlist is empty")
             return
         
-        # Show loading state
         self.show_loading_state()
         
-        # Process playlist songs instantly
-        def load_songs_instant():
+        def load_songs_instantly():
             try:
-                song_data_list = []
-                for song_data in playlist_data['songs']:
-                    # If song_data already has the required fields, use it directly
-                    if 'videoId' in song_data and 'title' in song_data:
-                        song_data_list.append(song_data)
-                    else:
-                        # Otherwise, try to get data from URL
-                        if 'url' in song_data:
-                            processed_data = self.get_song_data_from_url_fast(song_data['url'])
-                            if processed_data:
-                                song_data_list.append(processed_data)
+                instant_song_data = []
                 
-                # Update UI with song data
-                self.after(0, lambda: self.display_songs(song_data_list))
+                for song_data in playlist_data['songs']:
+                    # If song_data already has complete info, use it
+                    if ('videoId' in song_data and 'title' in song_data and 
+                        not song_data.get('is_loading', False)):
+                        instant_song_data.append(song_data)
+                    elif 'url' in song_data:
+                        # Get instant data from URL
+                        processed_data = self.get_instant_song_data(song_data['url'])
+                        if processed_data:
+                            instant_song_data.append(processed_data)
+                
+                # Display instantly
+                self.after(0, lambda: self.display_songs(instant_song_data))
+                
+                # Enhance songs that need it
+                songs_to_enhance = [s for s in instant_song_data if s.get('is_loading', False)]
+                if songs_to_enhance:
+                    threading.Thread(
+                        target=lambda: self.enhance_song_data_batch(songs_to_enhance),
+                        daemon=True
+                    ).start()
                 
             except Exception as e:
                 print(f"Error loading playlist songs: {e}")
                 self.after(0, lambda: self.show_error_state("Failed to load playlist songs"))
         
-        # Run instant loading
-        load_songs_instant()
-    
-    def get_song_data_from_url(self, url):
-        """Extract song data from YouTube URL using yt-dlp - legacy method"""
-        try:
-            # Extract video ID from URL
-            if 'youtube.com/watch?v=' in url:
-                video_id = url.split('v=')[1].split('&')[0]
-            else:
-                return None
-            
-            # Check cache first
-            if video_id in self.song_data_cache:
-                return self.song_data_cache[video_id]
-            
-            # Configure yt-dlp options
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,
-                'skip_download': True,
-                'ignoreerrors': True,
-                'geo_bypass': True,
-                'noplaylist': True,
-                'socket_timeout': 10,
-                'retries': 1,
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    return None
-                
-                # Create song data object
-                song_data = {
-                    'title': info.get('title', 'Unknown Title')[:100],
-                    'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
-                    'videoId': video_id,
-                    'uploader': info.get('uploader', 'Unknown')[:50],
-                    'duration': self.format_duration(info.get('duration', 0)),
-                    'view_count': self.format_views(info.get('view_count', 0)),
-                    'url': url
-                }
-                
-                # Cache the result
-                self.song_data_cache[video_id] = song_data
-                return song_data
-                
-        except Exception as e:
-            print(f"Error extracting song data from URL {url}: {e}")
-            return None
+        threading.Thread(target=load_songs_instantly, daemon=True).start()
     
     def format_duration(self, seconds):
         """Format duration in seconds to MM:SS or HH:MM:SS"""
         if not seconds or seconds <= 0:
-            return "0:00"
+            return None  # Return None instead of "0:00" so we can handle it properly
         
-        minutes, secs = divmod(int(seconds), 60)
-        hours, minutes = divmod(minutes, 60)
-        
-        if hours > 0:
-            return f"{hours}:{minutes:02d}:{secs:02d}"
-        else:
-            return f"{minutes}:{secs:02d}"
+        try:
+            seconds = int(float(seconds))  # Handle both int and float, and string numbers
+            minutes, secs = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            
+            if hours > 0:
+                return f"{hours}:{minutes:02d}:{secs:02d}"
+            else:
+                return f"{minutes}:{secs:02d}"
+        except (ValueError, TypeError):
+            return None
     
     def format_views(self, view_count):
         """Format view count to readable format"""
@@ -451,7 +515,7 @@ class PlaylistScreen(ctk.CTkFrame):
         # Empty state icon
         empty_icon = ctk.CTkLabel(
             empty_container,
-            text="",
+            text="♪",
             font=ctk.CTkFont(size=60),
             text_color="#666666"
         )
@@ -504,12 +568,23 @@ class PlaylistScreen(ctk.CTkFrame):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         
+        # Reset cards list
+        self.cards = []
+        
         # Configure grid for scrollable frame
         self.scrollable_frame.columnconfigure(0, weight=1)
         
         # Create song cards
         for idx, song_data in enumerate(song_data_list):
             self._add_song_card(song_data, idx)
+        
+        # Remove the last separator if it exists (since we add separators for all items)
+        if len(song_data_list) > 0:
+            last_separator_row = (len(song_data_list) - 1) * 2 + 1
+            separators = self.scrollable_frame.grid_slaves(row=last_separator_row, column=0)
+            for separator in separators:
+                if isinstance(separator, ctk.CTkFrame) and separator.cget("height") == 1:
+                    separator.destroy()
         
         # Update scroll region
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -567,9 +642,13 @@ class PlaylistScreen(ctk.CTkFrame):
         content_frame.columnconfigure(0, weight=1)
         
         # Title with dynamic wrapping
+        title_text = song_data['title']
+        if song_data.get('is_loading', False) and title_text == "Loading...":
+            title_text = f"Loading... (ID: {song_data.get('videoId', 'Unknown')[:8]})"
+        
         title = ctk.CTkLabel(
             content_frame,
-            text=song_data['title'],
+            text=title_text,
             font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w",
             justify="left",
@@ -582,24 +661,27 @@ class PlaylistScreen(ctk.CTkFrame):
         
         # Additional info (uploader, duration, views)
         details = []
-        if 'uploader' in song_data and song_data['uploader']:
+        if song_data.get('uploader') and song_data['uploader'] not in ["Loading...", "Unknown"]:
             details.append(song_data['uploader'])
-        if 'duration' in song_data and song_data['duration']:
+        if song_data.get('duration') and song_data['duration'] not in ["0:00", "Unknown"]:
             details.append(song_data['duration'])
-        if 'view_count' in song_data and song_data['view_count']:
+        if song_data.get('view_count') and song_data['view_count'] not in ["Loading...", "0 views"]:
             details.append(song_data['view_count'])
             
         if details:
             details_text = " • ".join(details)
-            details_label = ctk.CTkLabel(
-                content_frame,
-                text=details_text,
-                font=ctk.CTkFont(size=14),
-                text_color="gray",
-                anchor="w",
-                justify="left"
-            )
-            details_label.grid(row=1, column=0, sticky="nsw")
+        else:
+            details_text = "Loading details..." if song_data.get('is_loading', False) else "No details available"
+            
+        details_label = ctk.CTkLabel(
+            content_frame,
+            text=details_text,
+            font=ctk.CTkFont(size=14),
+            text_color="gray",
+            anchor="w",
+            justify="left"
+        )
+        details_label.grid(row=1, column=0, sticky="nsw")
         
         # Unlike/Remove button (different behavior for Saved Songs vs custom playlists)
         if self.playlist_name == "Saved Songs":
@@ -650,14 +732,13 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
-        # Add a separator between items
-        if idx < len(self.cards) + 1:  # Check if not the last item
-            separator = ctk.CTkFrame(
-                self.scrollable_frame,
-                height=1,
-                fg_color="#333333"
-            )
-            separator.grid(row=idx*2 + 1, column=0, sticky="ew", padx=20, pady=2)
+        # Add a separator between items (we'll add it for all items except we'll handle the last one in display_songs)
+        separator = ctk.CTkFrame(
+            self.scrollable_frame,
+            height=1,
+            fg_color="#333333"
+        )
+        separator.grid(row=idx*2 + 1, column=0, sticky="ew", padx=20, pady=2)
         
         self.cards.append(card)
         
@@ -775,3 +856,8 @@ class PlaylistScreen(ctk.CTkFrame):
     
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    
+    def __del__(self):
+        """Cleanup when the object is destroyed"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
