@@ -519,6 +519,9 @@ class App(ctk.CTk):
         
         # Update side menu content
         self.update_side_menu_content()
+        
+        # Refresh the playlist section to show playlists instead of login prompt
+        self.refresh_playlist_section()
 
     def on_logout_clicked(self):
         """Handle logout menu item click"""
@@ -544,6 +547,9 @@ class App(ctk.CTk):
         
         # Update side menu content
         self.update_side_menu_content()
+        
+        # Refresh the playlist section to show login prompt
+        self.refresh_playlist_section()
         
         print("User logged out")
 
@@ -605,6 +611,12 @@ class App(ctk.CTk):
 
     def create_playlist_section(self, parent_frame):
         """Create the playlist cards section"""
+        # Check if user is logged in
+        if not self.logged_in:
+            # Show login prompt when not logged in
+            self.create_login_prompt(parent_frame)
+            return
+        
         # Initialize playlists if not exists
         if not hasattr(self, 'playlists'):
             self.playlists = [
@@ -644,11 +656,68 @@ class App(ctk.CTk):
         
         # Create playlist cards
         self.create_playlist_cards(self.playlist_cards_frame)
+
+    def create_login_prompt(self, parent_frame):
+        """Create a login prompt when user is not logged in"""
+        # Create transparent container for login prompt with fixed height
+        login_container = ctk.CTkFrame(parent_frame, fg_color="transparent", height=220)
+        login_container.pack(fill="x", padx=20, pady=10)
+        login_container.pack_propagate(False)  # Prevent resizing
+        
+        # Center the login prompt
+        login_frame = ctk.CTkFrame(login_container, fg_color="transparent")
+        login_frame.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Login icon
+        login_icon = ctk.CTkLabel(
+            login_frame,
+            text="🔐",
+            font=ctk.CTkFont(size=48),
+            text_color="#1DB954"
+        )
+        login_icon.pack(pady=(0, 20))
+        
+        # Login message
+        login_message = ctk.CTkLabel(
+            login_frame,
+            text="Please log in to access this feature",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        login_message.pack(pady=(0, 15))
+        
+        # Subtitle
+        subtitle = ctk.CTkLabel(
+            login_frame,
+            text="Create and manage your playlists",
+            font=ctk.CTkFont(size=14),
+            text_color="#888888"
+        )
+        subtitle.pack(pady=(0, 25))
+        
+        # Login button
+        login_btn = ctk.CTkButton(
+            login_frame,
+            text="Log In",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            fg_color="#1DB954",
+            hover_color="#1ed760",
+            command=self.on_login_clicked,
+            width=120,
+            height=40
+        )
+        login_btn.pack()
     
     def refresh_playlist_cards(self):
         """Smoothly refresh only the playlist cards without affecting the banner"""
         if hasattr(self, 'playlist_cards_frame'):
-            self.create_playlist_cards(self.playlist_cards_frame)
+            if self.logged_in:
+                self.create_playlist_cards(self.playlist_cards_frame)
+            else:
+                # Clear the frame and show login prompt
+                for widget in self.playlist_cards_frame.winfo_children():
+                    widget.destroy()
+                self.create_login_prompt(self.playlist_cards_frame.master)
 
     def create_playlist_cards(self, parent_frame):
         """Create individual playlist cards"""
@@ -1625,6 +1694,10 @@ class App(ctk.CTk):
             # Add separator between items
             if i < len(self.menu_items) - 1:
                 ctk.CTkFrame(self.user_menu, height=1, fg_color="#444444").pack(fill="x", padx=5)
+
+    def refresh_playlist_section(self):
+        """Refresh the entire playlist section based on login status"""
+        self.show_main_frame()
 
     def __del__(self):
         """Cleanup when app is destroyed"""
