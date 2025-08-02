@@ -13,6 +13,7 @@ from LoginClass import LoginWindow
 from FirebaseClass import FirebaseManager
 from datetime import datetime
 from BannerAnimationClass import AnimatedBanner
+from SessionManagerClass import SessionManager
 
 # Setup
 ctk.set_appearance_mode("dark")
@@ -85,7 +86,8 @@ class App(ctk.CTk):
         # User state
         self.current_user = None
         self.logged_in = False
-
+        self.session_manager = SessionManager()  # Initialize session manager
+        
         # Layout containers
         self.create_main_area()  # Create main frame first
         self.create_topbar()
@@ -94,6 +96,9 @@ class App(ctk.CTk):
         
         # Bind window events
         self.bind('<Configure>', self._on_window_configure)
+        
+        # Check for existing session and auto-login
+        self.after(100, self.check_existing_session)
         
         # Show the welcome banner when app starts
         self.show_main_frame()
@@ -193,7 +198,7 @@ class App(ctk.CTk):
                 font=ctk.CTkFont(size=14),
                 fg_color="#FF6B6B",
                 hover_color="#FF5252",
-                command=self.on_logout_clicked
+                command=self.on_side_menu_logout_clicked  # Use the new method
             )
             logout_btn.pack(fill="x", pady=5)
         else:
@@ -203,7 +208,7 @@ class App(ctk.CTk):
                 font=ctk.CTkFont(size=14),
                 fg_color="#1DB954",
                 hover_color="#1ed760",
-                command=self.on_login_clicked
+                command=self.on_side_menu_login_clicked  # Use the new method
             )
             login_btn.pack(fill="x", pady=5)
     
@@ -482,8 +487,20 @@ class App(ctk.CTk):
                 self.hide_user_menu()
     
     def on_login_clicked(self):
-        """Handle login menu item click"""
+        """Handle login menu item click from user menu"""
+        # Only hide user menu, not side menu
         self.hide_user_menu()
+        
+        # Create and show login window
+        login_window = LoginWindow(self, on_login_success=self.on_login_success)
+        # Set focus to the login window
+        login_window.focus_force()
+    
+    def on_side_menu_login_clicked(self):
+        """Handle login button click from side menu"""
+        # Only hide side menu, not user menu
+        self.hide_side_menu()
+        
         # Create and show login window
         login_window = LoginWindow(self, on_login_success=self.on_login_success)
         # Set focus to the login window
@@ -524,8 +541,11 @@ class App(ctk.CTk):
         self.refresh_playlist_section()
 
     def on_logout_clicked(self):
-        """Handle logout menu item click"""
+        """Handle logout menu item click from user menu"""
         self.hide_user_menu()
+        
+        # Clear session
+        self.session_manager.clear_session()
         
         # Clear user state
         self.current_user = None
@@ -551,7 +571,40 @@ class App(ctk.CTk):
         # Refresh the playlist section to show login prompt
         self.refresh_playlist_section()
         
-        print("User logged out")
+        print("User logged out and session cleared")
+
+    def on_side_menu_logout_clicked(self):
+        """Handle logout button click from side menu"""
+        self.hide_side_menu()
+        
+        # Clear session
+        self.session_manager.clear_session()
+        
+        # Clear user state
+        self.current_user = None
+        self.logged_in = False
+        
+        # Hide username
+        self.username_label.configure(text="")
+        self.username_label.pack_forget()
+        
+        # Update menu items back to Log In
+        self.menu_items = [
+            ("Log In", self.on_login_clicked),
+            ("Settings", self.on_settings_clicked),
+            ("About", self.on_about_clicked)
+        ]
+        
+        # Recreate the menu with updated items
+        self.create_user_menu()
+        
+        # Update side menu content
+        self.update_side_menu_content()
+        
+        # Refresh the playlist section to show login prompt
+        self.refresh_playlist_section()
+        
+        print("User logged out and session cleared")
 
     def update_side_menu_content(self):
         """Update the side menu content based on login status"""
@@ -1310,6 +1363,8 @@ class App(ctk.CTk):
                 'extract_flat': True,
                 'skip_download': True,
                 'ignoreerrors': True,
+                'geo_bypass': True,
+                'noplaylist': True,
                 'socket_timeout': 8,
                 'retries': 1,
                 'format': 'best',
@@ -1698,6 +1753,36 @@ class App(ctk.CTk):
     def refresh_playlist_section(self):
         """Refresh the entire playlist section based on login status"""
         self.show_main_frame()
+
+    def check_existing_session(self):
+        """Check for existing session and auto-login if valid"""
+        session = self.session_manager.get_saved_session()
+        if session and 'username' in session:
+            # Auto-login the user
+            self.current_user = session['username']
+            self.logged_in = True
+            
+            # Update UI to show logged in state
+            self.username_label.configure(text=self.current_user)
+            self.username_label.pack(side="left", padx=(0, 10))
+            
+            # Update menu items to show Log Out instead of Log In
+            self.menu_items = [
+                ("Log Out", self.on_logout_clicked),
+                ("Settings", self.on_settings_clicked),
+                ("About", self.on_about_clicked)
+            ]
+            
+            # Recreate the menu with updated items
+            self.create_user_menu()
+            
+            # Update side menu content
+            self.update_side_menu_content()
+            
+            # Refresh the playlist section to show playlists
+            self.refresh_playlist_section()
+            
+            print(f"Auto-logged in as {self.current_user}")
 
     def __del__(self):
         """Cleanup when app is destroyed"""

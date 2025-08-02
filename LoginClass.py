@@ -2,6 +2,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 import os
 from RegisterClass import RegisterPage
+from SessionManagerClass import SessionManager
 
 class LoginWindow(ctk.CTkToplevel):
     def __init__(self, parent, on_login_success=None):
@@ -9,6 +10,9 @@ class LoginWindow(ctk.CTkToplevel):
         self.title("Login to HanyaMusic")
         self.geometry("600x500")
         self.resizable(False, False)
+        
+        # Initialize session manager
+        self.session_manager = SessionManager()
         
         # Make window truly modal
         self.grab_set()  # Make window modal
@@ -100,6 +104,19 @@ class LoginWindow(ctk.CTkToplevel):
         )
         self.eye_btn.pack(side="left", padx=(5, 0))
         
+        # Remember me checkbox frame
+        self.remember_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.remember_frame.pack(pady=(5, 10), anchor="w", padx=(60, 0))
+        
+        self.remember_me_var = ctk.BooleanVar()
+        self.remember_checkbox = ctk.CTkCheckBox(
+            self.remember_frame,
+            text="Remember me",
+            variable=self.remember_me_var,
+            font=ctk.CTkFont(size=14)
+        )
+        self.remember_checkbox.pack(side="left")
+        
         # Login button
         self.login_button = ctk.CTkButton(
             self.container,
@@ -113,9 +130,9 @@ class LoginWindow(ctk.CTkToplevel):
         )
         self.login_button.pack(pady=(10, 5))
         
-        # Sign up link
+        # Sign up link - moved to the left
         self.signup_frame = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.signup_frame.pack(pady=(10, 0))
+        self.signup_frame.pack(pady=(10, 0), anchor="w", padx=(60, 0))
         
         self.signup_label = ctk.CTkLabel(
             self.signup_frame,
@@ -144,6 +161,9 @@ class LoginWindow(ctk.CTkToplevel):
         )
         self.error_label.pack(pady=(10, 0))
         
+        # Check for existing session and auto-fill if found
+        self.check_existing_session()
+        
         # Bind Enter key to login
         self.password_entry.bind('<Return>', lambda e: self.attempt_login())
         
@@ -157,6 +177,23 @@ class LoginWindow(ctk.CTkToplevel):
         x = (self.winfo_screenwidth() // 2) - (width // 2)
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f'+{x}+{y}')
+    
+    def check_existing_session(self):
+        """Check if there's a valid existing session"""
+        session = self.session_manager.get_saved_session()
+        if session:
+            # Auto-fill username and check remember me
+            self.username_entry.insert(0, session['username'])
+            self.remember_me_var.set(True)
+            # Auto-login if session is valid
+            self.auto_login_from_session(session['username'])
+    
+    def auto_login_from_session(self, username):
+        """Automatically log in user from valid session"""
+        if self.on_login_success:
+            self.on_login_success(username)
+        self.grab_release()
+        self.destroy()
         
     def on_closing(self):
         """Handle window closing"""
@@ -167,6 +204,7 @@ class LoginWindow(ctk.CTkToplevel):
         """Handle login attempt"""
         username = self.username_entry.get().strip()
         password = self.password_entry.get()
+        remember_me = self.remember_me_var.get()
         
         # Basic validation
         if not username or not password:
@@ -178,6 +216,9 @@ class LoginWindow(ctk.CTkToplevel):
         firebase = FirebaseManager()
         
         if firebase.verify_credentials(username, password):
+            # Save session if remember me is checked
+            self.session_manager.save_session(username, remember_me)
+            
             if self.on_login_success:
                 self.on_login_success(username)
             self.grab_release()  # Release the grab before destroying
