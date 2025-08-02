@@ -826,6 +826,8 @@ class App(ctk.CTk):
                 command=lambda: self.start_inline_edit(card, playlist, index)
             )
             edit_btn.pack(side="right", padx=(5, 0))
+            # Prevent event propagation on edit button
+            edit_btn.bind("<Button-1>", lambda e: e.widget.focus_set())
         
         # Song count - use Firebase for "Saved Songs", local count for other playlists
         if playlist["is_default"] and self.logged_in:
@@ -860,6 +862,8 @@ class App(ctk.CTk):
             command=lambda: self.play_playlist(index)
         )
         play_btn.pack(side="left", padx=(0, 8))
+        # Prevent event propagation on play button
+        play_btn.bind("<Button-1>", lambda e: e.widget.focus_set())
         
         # Delete button (only for non-default playlists)
         if not playlist["is_default"]:
@@ -874,10 +878,29 @@ class App(ctk.CTk):
                 command=lambda: self.delete_playlist(index)
             )
             delete_btn.pack(side="left")
+            # Prevent event propagation on delete button
+            delete_btn.bind("<Button-1>", lambda e: e.widget.focus_set())
         
-        # Add double-click functionality for "Saved Songs" playlist
-        if playlist["is_default"] and self.logged_in:
-            card.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+        # Add click functionality for playlists - bind to both card and content_frame
+        if self.logged_in:
+            if playlist["is_default"]:
+                # For "Saved Songs" playlist
+                card.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+                content_frame.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+                # Also bind to individual elements
+                icon_label.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+                name_label.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+                count_label.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+                name_container.bind("<Double-Button-1>", lambda event: self.show_saved_songs_playlist())
+            else:
+                # For custom playlists
+                card.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
+                content_frame.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
+                # Also bind to individual elements
+                icon_label.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
+                name_label.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
+                count_label.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
+                name_container.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
         
         return card
 
@@ -892,7 +915,37 @@ class App(ctk.CTk):
         
         # Create and display PlaylistScreen
         from playlistscreen import PlaylistScreen
-        self.playlist_screen = PlaylistScreen(self.main_frame, self.current_user, self.on_song_selected)
+        self.playlist_screen = PlaylistScreen(
+            self.main_frame, 
+            self.current_user, 
+            self.on_song_selected, 
+            "Saved Songs",
+            self.show_main_frame
+        )
+        self.playlist_screen.pack(fill="both", expand=True)
+    
+    def show_playlist_songs(self, playlist):
+        """Show custom playlist songs using PlaylistScreen"""
+        if not self.logged_in:
+            return
+        
+        # Clear main frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        
+        # Create and display PlaylistScreen
+        from playlistscreen import PlaylistScreen
+        self.playlist_screen = PlaylistScreen(
+            self.main_frame, 
+            self.current_user, 
+            self.on_song_selected, 
+            playlist["name"],
+            self.show_main_frame
+        )
+        
+        # Load playlist songs instead of liked songs
+        self.playlist_screen.load_playlist_songs(playlist)
+        
         self.playlist_screen.pack(fill="both", expand=True)
 
     def start_inline_edit(self, card, playlist, index):
