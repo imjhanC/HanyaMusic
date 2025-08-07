@@ -481,6 +481,7 @@ class App(ctk.CTk):
         self.update_side_menu_content()
         
         # Refresh the playlist section to show playlists instead of login prompt
+        self.load_playlists_from_firebase()
         self.refresh_playlist_section()
 
     def on_logout_clicked(self):
@@ -1022,18 +1023,21 @@ class App(ctk.CTk):
         self.refresh_playlist_cards()
     
     def add_new_playlist(self):
-        """Add a new playlist"""
+        """Add a new playlist and save to Firebase"""
         playlist_name = f"Playlist {self.next_playlist_number}"
-        new_playlist = {
-            "name": playlist_name,
-            "songs": [],
-            "is_default": False
-        }
-        self.playlists.append(new_playlist)
-        self.next_playlist_number += 1
-        
-        # Smoothly refresh only the playlist cards
-        self.refresh_playlist_cards()
+
+        # Save to Firebase
+        firebase = FirebaseManager()
+        success = firebase.create_playlist(self.current_user, playlist_name)
+        if success:
+            new_playlist = {
+                "name": playlist_name,
+                "songs": [],
+                "is_default": False
+            }
+            self.playlists.append(new_playlist)
+            self.next_playlist_number += 1
+            self.refresh_playlist_cards()
     
     def edit_playlist_name(self, index):
         """Edit playlist name"""
@@ -1809,9 +1813,35 @@ class App(ctk.CTk):
             self.update_side_menu_content()
             
             # Refresh the playlist section to show playlists
+            self.load_playlists_from_firebase()
             self.refresh_playlist_section()
             
             print(f"Auto-logged in as {self.current_user}")
+
+    def load_playlists_from_firebase(self):
+        """Load playlists for the current user from Firebase and update self.playlists."""
+        if not self.logged_in or not self.current_user:
+            self.playlists = []
+            self.next_playlist_number = 1
+            return
+
+        firebase = FirebaseManager()
+        playlists = firebase.get_user_playlists(self.current_user)
+        # Always add "Saved Songs" as the first playlist
+        saved_songs_playlist = {
+            "name": "Saved Songs",
+            "songs": [],
+            "is_default": True
+        }
+        # Add is_default: False to all custom playlists
+        if playlists is not None:
+            for p in playlists:
+                p["is_default"] = False
+            self.playlists = [saved_songs_playlist] + playlists
+            self.next_playlist_number = len(playlists) + 1
+        else:
+            self.playlists = [saved_songs_playlist]
+            self.next_playlist_number = 1
 
     def __del__(self):
         """Cleanup when app is destroyed"""

@@ -9,7 +9,7 @@ from datetime import datetime
 class FirebaseManager:
     def __init__(self):
         """Initialize Firebase Admin SDK with the provided credentials."""
-        cred_path = os.path.join(os.path.dirname(__file__), 'hanyamusic-ac4ce-firebase-adminsdk-fbsvc-402e7bb396.json')
+        cred_path = os.path.join(os.path.dirname(__file__), 'hanyamusic-ac4ce-firebase-adminsdk-fbsvc-e2117ea06f.json')
         cred = credentials.Certificate(cred_path)
         
         try:
@@ -360,3 +360,59 @@ class FirebaseManager:
         except Exception as e:
             print(f"Error getting saved songs count: {str(e)}")
             return 0
+        
+    #  Create a new playlist for the user
+    def create_playlist(self, username: str, playlist_name: str) -> bool:
+        """Create a new playlist for the user, or add to existing user's playlists array."""
+        try:
+            encrypted_username = self._encrypt_data(username)
+            playlists_ref = self.db.collection('playlists')
+
+            # Query for existing document for this user
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            user_doc = None
+            for doc in user_docs:
+                user_doc = doc
+                break
+
+            # Use client-side timestamp for created_at
+            new_playlist = {
+                'name': playlist_name,
+                'created_at': datetime.utcnow().isoformat(),  # Use ISO string for compatibility
+                'songs': []
+            }
+
+            if user_doc:
+                # Update existing document: append to playlists array
+                doc_ref = user_doc.reference
+                doc_ref.update({
+                    'playlists': firestore.ArrayUnion([new_playlist])
+                })
+                print(f"Added playlist '{playlist_name}' to existing user {username}")
+            else:
+                # Create new document for this user
+                playlist_data = {
+                    'username': encrypted_username,
+                    'playlists': [new_playlist]
+                }
+                playlists_ref.add(playlist_data)
+                print(f"Created new playlist document for user {username} with playlist '{playlist_name}'")
+            return True
+
+        except Exception as e:
+            print(f"Error creating playlist: {str(e)}")
+            return False
+
+    def get_user_playlists(self, username: str) -> list:
+        """Get all playlists for a user as a list of playlist dicts."""
+        try:
+            encrypted_username = self._encrypt_data(username)
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                return user_data.get('playlists', [])
+            return []
+        except Exception as e:
+            print(f"Error getting user playlists: {str(e)}")
+            return []
