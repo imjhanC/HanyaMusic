@@ -51,9 +51,9 @@ class PlaylistScreen(ctk.CTkFrame):
         # Create content area
         self.create_content_area()
         
-        print("[DEBUG] Loading liked songs...")
-        # Load liked songs
-        self.load_liked_songs()
+        if self.playlist_name == "Saved Songs":
+            self.load_liked_songs()
+        # For custom playlists, the caller (test.py) will call load_playlist_songs(...)
         print("[DEBUG] PlaylistScreen.__init__ completed")
 
     def create_banner(self):
@@ -700,7 +700,8 @@ class PlaylistScreen(ctk.CTkFrame):
         # Loading text
         loading_text = ctk.CTkLabel(
             loading_container,
-            text="Loading your liked songs...",
+            text=("Loading your liked songs..." if self.playlist_name == "Saved Songs"
+                  else f"Loading '{self.playlist_name}'..."),
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color="#1DB954"
         )
@@ -727,6 +728,12 @@ class PlaylistScreen(ctk.CTkFrame):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         
+        # Hide scrollbar when empty
+        self.scrollbar.grid_remove()
+        
+        # Unbind mouse wheel to prevent scrolling
+        self.canvas.unbind_all("<MouseWheel>")
+        
         # Create empty state container
         empty_container = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
         empty_container.pack(expand=True, fill="both", pady=50)
@@ -748,14 +755,25 @@ class PlaylistScreen(ctk.CTkFrame):
             text_color="#888888"
         )
         empty_text.pack(pady=10)
+        
+        # Update scroll region to prevent scrolling when empty
+        self.canvas.update_idletasks()
+        self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        
         print("[DEBUG] show_empty_state completed")
-    
+
     def show_error_state(self, message):
         """Show error state when loading fails"""
         print(f"[DEBUG] show_error_state called with message: {message}")
         # Clear existing content
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
+        
+        # Hide scrollbar when empty
+        self.scrollbar.grid_remove()
+        
+        # Unbind mouse wheel to prevent scrolling
+        self.canvas.unbind_all("<MouseWheel>")
         
         # Create error state container
         error_container = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
@@ -778,6 +796,11 @@ class PlaylistScreen(ctk.CTkFrame):
             text_color="#FF6B6B"
         )
         error_text.pack(pady=10)
+        
+        # Update scroll region to prevent scrolling when empty
+        self.canvas.update_idletasks()
+        self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        
         print("[DEBUG] show_error_state completed")
     
     def display_songs(self, song_data_list):
@@ -786,6 +809,12 @@ class PlaylistScreen(ctk.CTkFrame):
         # Clear existing content
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
+        
+        # Show scrollbar when there are songs
+        self.scrollbar.grid()
+        
+        # Rebind mouse wheel for scrolling when there are songs
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         
         # Reset cards list
         self.cards = []
