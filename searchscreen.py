@@ -333,15 +333,44 @@ class SearchScreen(ctk.CTkFrame):
             self._hide_all_menus()
 
     def _add_to_playlist(self, playlist, song_data):
+        """Add a song to a playlist using Firebase"""
+        if not self.current_user or not self.firebase_manager:
+            print("User not logged in or Firebase manager not available")
+            return
+        
+        # Call Firebase method to add song to playlist
+        success, message = self.firebase_manager.add_song_to_playlist(
+            self.current_user, 
+            playlist['name'], 
+            song_data
+        )
+        
+        if success:
+            # Show success message in context menu
+            if self.context_menu:
+                ctk.CTkLabel(
+                    self.context_menu,
+                    text=f"✓ {message}",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#1DB954"
+                ).pack(pady=5)
+            print(message)
+        else:
+            # Show error message in context menu
+            if self.context_menu:
+                ctk.CTkLabel(
+                    self.context_menu,
+                    text=f"✗ {message}",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#FF6B6B"
+                ).pack(pady=5)
+            print(f"Error: {message}")
+        
+        # Also call the callback if it exists (for backward compatibility)
         if hasattr(self, 'add_to_playlist_callback') and self.add_to_playlist_callback:
             self.add_to_playlist_callback(song_data, playlist)
-        if self.context_menu:
-            ctk.CTkLabel(
-                self.context_menu,
-                text=f"✓ Added to '{playlist['name']}'",
-                font=ctk.CTkFont(size=12, weight="bold"),
-                text_color="#1DB954"
-            ).pack(pady=5)
+        
+        # Hide menus after a delay
         self.after(900, self._hide_all_menus)
     
     def _on_canvas_configure(self, event):

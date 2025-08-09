@@ -944,8 +944,8 @@ class App(ctk.CTk):
             self.show_main_frame
         )
         
-        # Load playlist songs instead of liked songs
-        self.playlist_screen.load_playlist_songs(playlist)
+        # The PlaylistScreen will automatically load songs from Firebase
+        # No need to call load_playlist_songs manually
         
         self.playlist_screen.pack(fill="both", expand=True)
 

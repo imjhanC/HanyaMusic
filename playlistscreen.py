@@ -51,9 +51,13 @@ class PlaylistScreen(ctk.CTkFrame):
         # Create content area
         self.create_content_area()
         
+        # Load songs based on playlist type
         if self.playlist_name == "Saved Songs":
             self.load_liked_songs()
-        # For custom playlists, the caller (test.py) will call load_playlist_songs(...)
+        else:
+            # For custom playlists, load from Firebase
+            self.load_custom_playlist_songs()
+        
         print("[DEBUG] PlaylistScreen.__init__ completed")
 
     def create_banner(self):
@@ -613,8 +617,78 @@ class PlaylistScreen(ctk.CTkFrame):
         # Start loading in background thread
         threading.Thread(target=load_songs_instantly, daemon=True).start()
 
+    def load_custom_playlist_songs(self):
+        """Load songs from a custom playlist using Firebase"""
+        print(f"[DEBUG] load_custom_playlist_songs called for playlist: {self.playlist_name}")
+        
+        if not self.current_user or not self.firebase_manager:
+            print("[DEBUG] User not logged in or no firebase manager")
+            self.show_empty_state("Please log in to view your playlists")
+            return
+        
+        print("[DEBUG] Showing loading state...")
+        self.show_loading_state()
+        
+        def load_songs_instantly():
+            print("[DEBUG] load_custom_songs_instantly started")
+            try:
+                # Get playlist songs from Firebase
+                playlist_songs = self.firebase_manager.get_playlist_songs(self.current_user, self.playlist_name)
+                print(f"[DEBUG] Got {len(playlist_songs) if playlist_songs else 0} songs from Firebase")
+                
+                if not playlist_songs:
+                    self.after(0, lambda: self.show_empty_state(f"Playlist '{self.playlist_name}' is empty"))
+                    return
+                
+                # Process songs from Firebase
+                instant_song_data = []
+                for song_obj in playlist_songs:
+                    # Each song_obj should have a 'url' field from Firebase
+                    if 'url' in song_obj:
+                        # Get instant data from URL
+                        processed_data = self.get_instant_song_data(song_obj['url'])
+                        if processed_data:
+                            # Merge any additional data from Firebase
+                            if 'title' in song_obj:
+                                processed_data['title'] = song_obj['title']
+                            if 'uploader' in song_obj:
+                                processed_data['uploader'] = song_obj['uploader']
+                            if 'duration' in song_obj:
+                                processed_data['duration'] = song_obj['duration']
+                            if 'thumbnail_url' in song_obj:
+                                processed_data['thumbnail_url'] = song_obj['thumbnail_url']
+                            if 'added_at' in song_obj:
+                                processed_data['added_at'] = song_obj['added_at']
+                            
+                            instant_song_data.append(processed_data)
+                
+                print(f"[DEBUG] Got instant data for {len(instant_song_data)} songs")
+                
+                # Display instantly
+                self.after(0, lambda: self.display_songs(instant_song_data))
+                
+                # Start background enhancement
+                if instant_song_data:
+                    threading.Thread(
+                        target=lambda: self.enhance_song_data_batch(instant_song_data),
+                        daemon=True
+                    ).start()
+                
+            except Exception as e:
+                print(f"[DEBUG] Error in load_custom_songs_instantly: {e}")
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self.show_error_state("Failed to load playlist songs"))
+        
+        # Start loading in background thread
+        threading.Thread(target=load_songs_instantly, daemon=True).start()
+
     def load_playlist_songs(self, playlist_data):
-        """Load songs from a specific playlist with instant display"""
+        """Load songs from a specific playlist with instant display - LEGACY METHOD"""
+        # This method is kept for backward compatibility but should not be used for custom playlists
+        # Custom playlists should use load_custom_playlist_songs() instead
+        print("[DEBUG] load_playlist_songs called - LEGACY METHOD")
+        
         if not playlist_data or not playlist_data.get('songs'):
             self.show_empty_state("This playlist is empty")
             return
@@ -1057,12 +1131,35 @@ class PlaylistScreen(ctk.CTkFrame):
     
     def _on_remove_from_playlist_clicked(self, song_data, remove_button):
         """Handle remove from playlist button click"""
-        # For custom playlists, we need to remove from the local playlist data
-        # This would need to be implemented in the main app
-        print(f"Remove '{song_data.get('title')}' from playlist '{self.playlist_name}'")
+        if not self.current_user or not self.firebase_manager:
+            print("User not logged in")
+            return
         
-        # For now, just remove from UI
-        self._remove_song_card(song_data)
+        video_id = song_data.get('videoId')
+        if not video_id:
+            print("No video ID found")
+            return
+        
+        if self.playlist_name == "Saved Songs":
+            # Remove from liked songs
+            success = self.firebase_manager.unlike_song(self.current_user, video_id)
+            if success:
+                print(f"Removed '{song_data.get('title')}' from liked songs")
+                self._remove_song_card(song_data)
+            else:
+                print(f"Failed to remove '{song_data.get('title')}' from liked songs")
+        else:
+            # Remove from custom playlist
+            success, message = self.firebase_manager.remove_song_from_playlist(
+                self.current_user, 
+                self.playlist_name, 
+                video_id
+            )
+            if success:
+                print(message)
+                self._remove_song_card(song_data)
+            else:
+                print(f"Failed to remove song: {message}")
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""

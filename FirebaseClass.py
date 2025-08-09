@@ -507,3 +507,154 @@ class FirebaseManager:
         except Exception as e:
             print(f"Error deleting playlist: {str(e)}")
             return False
+
+    def add_song_to_playlist(self, username: str, playlist_name: str, song_data: dict) -> tuple:
+        """Add a song to a specific playlist for a user.
+        
+        Args:
+            username: Username of the user
+            playlist_name: Name of the playlist to add the song to
+            song_data: Dictionary containing song information (videoId, title, uploader, etc.)
+            
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            video_id = song_data.get('videoId')
+            
+            if not video_id:
+                return False, "No video ID found in song data"
+            
+            # Create song URL
+            song_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Create song object with metadata
+            song_object = {
+                'url': song_url,
+            }
+            
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                playlists = user_data.get('playlists', [])
+                
+                # Find the playlist with the specified name
+                for i, playlist in enumerate(playlists):
+                    if playlist.get('name') == playlist_name:
+                        # Check if song is already in the playlist
+                        songs = playlist.get('songs', [])
+                        for song in songs:
+                            if song.get('videoId') == video_id:
+                                return False, f"Song '{song_data.get('title')}' is already in playlist '{playlist_name}'"
+                        
+                        # Add the song to the playlist
+                        songs.append(song_object)
+                        playlists[i]['songs'] = songs
+                        
+                        # Update the document
+                        doc.reference.update({
+                            'playlists': playlists,
+                        })
+                        
+                        print(f"Added song '{song_data.get('title')}' to playlist '{playlist_name}' for user {username}")
+                        return True, f"Added '{song_data.get('title')}' to playlist '{playlist_name}'"
+                
+                # If we get here, playlist was not found
+                return False, f"Playlist '{playlist_name}' not found"
+            
+            # If we get here, no playlists document was found
+            return False, f"No playlists found for user {username}"
+            
+        except Exception as e:
+            print(f"Error adding song to playlist: {str(e)}")
+            return False, f"Error: {str(e)}"
+
+    def remove_song_from_playlist(self, username: str, playlist_name: str, video_id: str) -> tuple:
+        """Remove a song from a specific playlist for a user.
+        
+        Args:
+            username: Username of the user
+            playlist_name: Name of the playlist to remove the song from
+            video_id: YouTube video ID of the song to remove
+            
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                playlists = user_data.get('playlists', [])
+                
+                # Find the playlist with the specified name
+                for i, playlist in enumerate(playlists):
+                    if playlist.get('name') == playlist_name:
+                        songs = playlist.get('songs', [])
+                        
+                        # Find and remove the song
+                        for j, song in enumerate(songs):
+                            if song.get('videoId') == video_id:
+                                removed_song = songs.pop(j)
+                                playlists[i]['songs'] = songs
+                                
+                                # Update the document
+                                doc.reference.update({
+                                    'playlists': playlists,
+                                })
+                                
+                                print(f"Removed song '{removed_song.get('title')}' from playlist '{playlist_name}' for user {username}")
+                                return True, f"Removed '{removed_song.get('title')}' from playlist '{playlist_name}'"
+                        
+                        # If we get here, song was not found in playlist
+                        return False, f"Song not found in playlist '{playlist_name}'"
+                
+                # If we get here, playlist was not found
+                return False, f"Playlist '{playlist_name}' not found"
+            
+            # If we get here, no playlists document was found
+            return False, f"No playlists found for user {username}"
+            
+        except Exception as e:
+            print(f"Error removing song from playlist: {str(e)}")
+            return False, f"Error: {str(e)}"
+
+    def get_playlist_songs(self, username: str, playlist_name: str) -> list:
+        """Get all songs in a specific playlist for a user.
+        
+        Args:
+            username: Username of the user
+            playlist_name: Name of the playlist
+            
+        Returns:
+            list: List of song objects in the playlist
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                playlists = user_data.get('playlists', [])
+                
+                # Find the playlist with the specified name
+                for playlist in playlists:
+                    if playlist.get('name') == playlist_name:
+                        return playlist.get('songs', [])
+                
+                # If we get here, playlist was not found
+                return []
+            
+            # If we get here, no playlists document was found
+            return []
+            
+        except Exception as e:
+            print(f"Error getting playlist songs: {str(e)}")
+            return []
