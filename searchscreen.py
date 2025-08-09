@@ -91,6 +91,12 @@ class SearchScreen(ctk.CTkFrame):
         # Initialize cards list
         self.cards = []
         self.create_results_grid()
+
+        self._menu_open = False
+        self._scroll_disabled = False
+        self._saved_scroll_cmd = None
+        self.context_menu = None
+        self.submenu = None
     
     def set_song_selection_callback(self, callback):
         """Set callback function to be called when a song is selected"""
@@ -151,160 +157,111 @@ class SearchScreen(ctk.CTkFrame):
         self._show_context_menu(event, song_data)
     
     def _show_context_menu(self, event, song_data):
-        """Show context menu for adding song to playlist"""
-        # Create floating menu frame
+        # Close previous menus
+        self._hide_playlist_submenu()
+        self._hide_context_menu()
+
+        # Build primary menu
         self.context_menu = ctk.CTkFrame(
             self,
-            width=250,
-            corner_radius=10,
+            width=230,
+            corner_radius=8,
             fg_color="#2a2a2a",
             border_width=1,
             border_color="#444444"
         )
-        
-        # Get window dimensions
-        window_width = self.winfo_width()
-        window_height = self.winfo_height()
-        menu_width = 250
-        menu_height = 200  # Approximate height
-        
-        # Get cursor position relative to the window
-        cursor_x = event.x
-        cursor_y = event.y
-        
-        # Position menu to the right of cursor
-        menu_x = cursor_x + 5
-        menu_y = cursor_y
-        
-        # If not enough space on the right, position to the left
-        if menu_x + menu_width > window_width:
-            menu_x = cursor_x - menu_width - 5
-        
-        # Adjust vertical position if menu goes below window
-        if menu_y + menu_height > window_height:
-            menu_y = window_height - menu_height - 10
-        
-        # Ensure menu doesn't go above window
-        if menu_y < 0:
-            menu_y = 10
-        
-        self.context_menu.place(x=menu_x, y=menu_y)
+
+        # Position bottom-right of cursor; fallback upper-right if blocked
+        window_w, window_h = self.winfo_width(), self.winfo_height()
+        menu_w, menu_h = 230, 120
+        # convert to coordinates relative to self
+        cursor_x = event.x_root - self.winfo_rootx()
+        cursor_y = event.y_root - self.winfo_rooty()
+
+        x = cursor_x + 5
+        y = cursor_y + 5
+        if x + menu_w > window_w:
+            x = cursor_x - menu_w - 5
+        if y + menu_h > window_h:
+            y = cursor_y - menu_h - 5
+        x = max(5, min(x, window_w - menu_w - 5))
+        y = max(5, min(y, window_h - menu_h - 5))
+
+        self.context_menu.place(x=x, y=y)
         self.context_menu.lift()
-        
-        # Title
-        title_label = ctk.CTkLabel(
-            self.context_menu,
-            text="Add to Playlist",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#FFFFFF"
-        )
-        title_label.pack(pady=(15, 5))
-        
-        # Song info
-        song_info_label = ctk.CTkLabel(
-            self.context_menu,
-            text=song_data.get('title', 'Unknown Song')[:30] + "..." if len(song_data.get('title', '')) > 30 else song_data.get('title', 'Unknown Song'),
-            font=ctk.CTkFont(size=12),
-            text_color="#888888"
-        )
-        song_info_label.pack(pady=(0, 15))
-        
-        # Get user playlists
-        playlists = self.firebase_manager.get_user_playlists(self.current_user)
-        
-        if not playlists:
-            # Show message if no playlists
-            no_playlist_label = ctk.CTkLabel(
-                self.context_menu,
-                text="No playlists found.\nCreate a playlist first.",
-                font=ctk.CTkFont(size=12),
-                text_color="#888888"
-            )
-            no_playlist_label.pack(pady=15)
-        else:
-            # Create scrollable frame for playlists
-            canvas = ctk.CTkCanvas(self.context_menu, bg="#2a2a2a", highlightthickness=0, height=120)
-            scrollbar = ctk.CTkScrollbar(self.context_menu, orientation="vertical", command=canvas.yview)
-            scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
-            
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
-            
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            canvas.configure(yscrollcommand=scrollbar.set)
-            
-            canvas.pack(side="left", fill="both", expand=True, padx=10, pady=5)
-            scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=5)
-            
-            # Add playlist options
-            for i, playlist in enumerate(playlists):
-                playlist_btn = ctk.CTkButton(
-                    scrollable_frame,
-                    text=playlist["name"],
-                    font=ctk.CTkFont(size=12),
-                    fg_color="#333333",
-                    hover_color="#444444",
-                    anchor="w",
-                    command=lambda p=playlist, s=song_data: self._add_to_playlist(p, s),
-                    height=30
-                )
-                playlist_btn.pack(fill="x", padx=5, pady=1)
-            
-            # Update canvas scroll region
-            canvas.update_idletasks()
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        
-        # Cancel button
+
+        # Row: "Add to playlist >"
+        add_row = ctk.CTkFrame(self.context_menu, fg_color="transparent")
+        add_row.pack(fill="x", padx=10, pady=(10, 5))
+
+        left = ctk.CTkLabel(add_row, text="Add to playlist", font=ctk.CTkFont(size=14), text_color="#FFFFFF")
+        right = ctk.CTkLabel(add_row, text=">", font=ctk.CTkFont(size=14, weight="bold"), text_color="#BBBBBB")
+        left.pack(side="left")
+        right.pack(side="right")
+
+        def _row_enter(_):
+            add_row.configure(fg_color="#3a3a3a")
+            self._ensure_playlist_submenu(add_row, song_data)
+
+        def _row_leave(_):
+            add_row.configure(fg_color="transparent")
+            # Only schedule hide if we're not moving to the submenu
+            self._schedule_hide_submenu_if_not_in_submenu()
+
+        for w in (add_row, left, right):
+            w.bind("<Enter>", _row_enter)
+            w.bind("<Leave>", _row_leave)
+
+        # Separator
+        ctk.CTkFrame(self.context_menu, height=1, fg_color="#444444").pack(fill="x", padx=10, pady=5)
+
+        # Cancel
         cancel_btn = ctk.CTkButton(
             self.context_menu,
             text="Cancel",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=14),
             fg_color="#666666",
             hover_color="#777777",
             command=self._hide_context_menu,
             height=30
         )
-        cancel_btn.pack(pady=(10, 15))
-        
-        # Bind click outside to close menu - bind to the main window
+        cancel_btn.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Prevent scroll while menu is open
+        self._menu_open = True
+        self._disable_scrolling()
+
+        # Close on outside click
         self.winfo_toplevel().bind("<Button-1>", self._on_window_click_context_menu)
 
     def _hide_context_menu(self):
-        """Hide the context menu"""
-        if hasattr(self, 'context_menu'):
+        self._hide_playlist_submenu()
+        if self.context_menu:
             self.context_menu.place_forget()
             self.context_menu = None
-            # Unbind the click handler
-            self.winfo_toplevel().unbind("<Button-1>")
+        self._menu_open = False
+        self._enable_scrolling()
+        self.winfo_toplevel().unbind("<Button-1>")
 
     def _on_window_click_context_menu(self, event):
-        """Handle clicks outside the context menu to close it"""
-        if hasattr(self, 'context_menu') and self.context_menu:
-            # Get the widget that was clicked
-            clicked_widget = event.widget
-            
-            # Check if the click was outside the context menu
-            if clicked_widget != self.context_menu and not self.context_menu.winfo_containing(event.x_root, event.y_root):
-                self._hide_context_menu()
+        if not self.context_menu:
+            return
+        in_primary = self.context_menu.winfo_containing(event.x_root, event.y_root) is not None
+        in_sub = self.submenu and self.submenu.winfo_containing(event.x_root, event.y_root) is not None
+        if not in_primary and not in_sub:
+            self._hide_context_menu()
 
     def _add_to_playlist(self, playlist, song_data):
-        """Add song to selected playlist"""
-        if self.add_to_playlist_callback:
+        if hasattr(self, 'add_to_playlist_callback') and self.add_to_playlist_callback:
             self.add_to_playlist_callback(song_data, playlist)
-        
-        # Show success message
-        success_label = ctk.CTkLabel(
-            self.context_menu,
-            text=f"✓ Added to '{playlist['name']}'",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#1DB954"
-        )
-        success_label.pack(pady=5)
-        
-        # Hide menu after a short delay
-        self.after(1500, self._hide_context_menu)
+        if self.context_menu:
+            ctk.CTkLabel(
+                self.context_menu,
+                text=f"✓ Added to '{playlist['name']}'",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color="#1DB954"
+            ).pack(pady=5)
+        self.after(900, self._hide_context_menu)
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
@@ -338,17 +295,18 @@ class SearchScreen(ctk.CTkFrame):
             self._resize_after_id = None
     
     def _on_mousewheel(self, event):
+        if getattr(self, "_menu_open", False):
+            return "break"
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         self._check_scroll_end(event)
 
     def _check_scroll_end(self, event=None):
-        # Only trigger if not already loading and not exhausted
+        if getattr(self, "_menu_open", False):
+            return
         if self.loading_more or self.no_more_results or not self.load_more_callback:
             return
-        # Get current scroll position
         try:
             first, last = self.canvas.yview()
-            # If near the bottom (last > 0.98), trigger load more
             if last > 0.98:
                 self.loading_more = True
                 self._show_loading_more()
@@ -524,18 +482,16 @@ class SearchScreen(ctk.CTkFrame):
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
         # Hover + right-click across entire card area
-        hover_on_color = "#333333"
-        hover_off_color = "#222222"
+        hover_on = "#333333"
+        hover_off = "#222222"
 
         def set_hover(is_on: bool):
-            color = hover_on_color if is_on else hover_off_color
+            color = hover_on if is_on else hover_off
             card.configure(fg_color=color)
-            # paint inner frames too so the whole card looks hovered
             content_frame.configure(fg_color=color if is_on else "transparent")
             thumb_container.configure(fg_color=color if is_on else "transparent")
 
-        def on_enter(_):
-            set_hover(True)
+        def on_enter(_): set_hover(True)
 
         def on_leave(e):
             w = self.winfo_containing(e.x_root, e.y_root)
@@ -589,3 +545,163 @@ class SearchScreen(ctk.CTkFrame):
                 return True
             widget = widget.master
         return False
+
+    def _cancel_hide_submenu(self):
+        if hasattr(self, '_submenu_timer') and self._submenu_timer:
+            self.after_cancel(self._submenu_timer)
+            self._submenu_timer = None
+
+    def _schedule_hide_submenu(self, delay=200):
+        self._cancel_hide_submenu()
+        self._submenu_timer = self.after(delay, self._hide_playlist_submenu)
+
+    def _schedule_hide_submenu_if_not_in_submenu(self, delay=100):
+        """Schedule hide submenu only if mouse is not in submenu area"""
+        def check_and_hide():
+            if self.submenu:
+                # Get current mouse position
+                try:
+                    x, y = self.winfo_pointerxy()
+                    widget_under_mouse = self.winfo_containing(x, y)
+                    
+                    # Check if mouse is over submenu or any of its children
+                    if widget_under_mouse and self._is_descendant_of(widget_under_mouse, self.submenu):
+                        # Mouse is in submenu, don't hide
+                        return
+                    elif widget_under_mouse == self.submenu:
+                        # Mouse is directly on submenu
+                        return
+                except:
+                    pass
+                
+                # Mouse is not in submenu, hide it
+                self._hide_playlist_submenu()
+        
+        self._cancel_hide_submenu()
+        self._submenu_timer = self.after(delay, check_and_hide)
+
+    def _disable_scrolling(self):
+        if self._scroll_disabled:
+            return
+        self._scroll_disabled = True
+        try:
+            self._saved_scroll_cmd = self.scrollbar.cget("command")
+        except Exception:
+            self._saved_scroll_cmd = None
+        self.scrollbar.configure(command=lambda *args: None)
+        self.winfo_toplevel().bind_all("<MouseWheel>", lambda e: "break")
+
+    def _enable_scrolling(self):
+        if not self._scroll_disabled:
+            return
+        self._scroll_disabled = False
+        self.scrollbar.configure(command=self.canvas.yview)
+        self.winfo_toplevel().unbind_all("<MouseWheel>")
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _ensure_playlist_submenu(self, anchor_widget, song_data):
+        self._cancel_hide_submenu()
+        if self.submenu:
+            self._place_submenu(anchor_widget)
+            return
+        self._build_playlist_submenu(song_data)
+        self._place_submenu(anchor_widget)
+
+    def _build_playlist_submenu(self, song_data):
+        self.submenu = ctk.CTkFrame(
+            self,
+            width=240,
+            corner_radius=8,
+            fg_color="#2a2a2a",
+            border_width=1,
+            border_color="#444444"
+        )
+
+        ctk.CTkLabel(
+            self.submenu,
+            text="Choose a playlist",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#FFFFFF"
+        ).pack(padx=10, pady=(10, 5), anchor="w")
+
+        container = ctk.CTkFrame(self.submenu, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        canvas = ctk.CTkCanvas(container, bg="#2a2a2a", highlightthickness=0, height=3*36)
+        sb = ctk.CTkScrollbar(container, orientation="vertical", command=canvas.yview)
+        inner = ctk.CTkFrame(canvas, fg_color="transparent")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        
+        # Add mouse wheel scrolling support for the submenu canvas
+        def _on_submenu_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        # Bind mouse wheel events to canvas and inner frame
+        canvas.bind("<MouseWheel>", _on_submenu_mousewheel)
+        inner.bind("<MouseWheel>", _on_submenu_mousewheel)
+
+        playlists = self.firebase_manager.get_user_playlists(self.current_user) or []
+        for p in playlists:
+            btn = ctk.CTkButton(
+                inner,
+                text=p["name"],
+                font=ctk.CTkFont(size=13),
+                fg_color="#333333",
+                hover_color="#444444",
+                anchor="w",
+                height=30,
+                command=lambda pl=p: self._add_to_playlist(pl, song_data)
+            )
+            # Changed from padx=4 to padx=1 to reduce gap to scrollbar
+            btn.pack(fill="x", padx=1, pady=2)
+
+        # Fixed hover event handling for the submenu
+        def _submenu_enter(event):
+            self._cancel_hide_submenu()
+
+        def _submenu_leave(event):
+            # Only schedule hide if we're really leaving the submenu area
+            self._schedule_hide_submenu_if_not_in_submenu(delay=150)
+
+        # Bind events to the submenu and all its children recursively
+        def bind_submenu_events(widget):
+            widget.bind("<Enter>", _submenu_enter)
+            widget.bind("<Leave>", _submenu_leave)
+            # Also bind mouse wheel to playlist buttons for smooth scrolling
+            if isinstance(widget, ctk.CTkButton):
+                widget.bind("<MouseWheel>", _on_submenu_mousewheel)
+            for child in widget.winfo_children():
+                bind_submenu_events(child)
+
+        bind_submenu_events(self.submenu)
+
+    def _place_submenu(self, anchor_widget):
+        if not self.context_menu or not self.submenu:
+            return
+        self.submenu.lift()
+        ax = anchor_widget.winfo_rootx()
+        ay = anchor_widget.winfo_rooty()
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        x = (ax - parent_x) + anchor_widget.winfo_width() + 8
+        y = (ay - parent_y)
+
+        window_w, window_h = self.winfo_width(), self.winfo_height()
+        submenu_w = 240
+        submenu_h = min(3*36 + 50, 260)
+
+        if x + submenu_w > window_w:
+            x = (ax - parent_x) - submenu_w - 8
+        if y + submenu_h > window_h:
+            y = max(5, window_h - submenu_h - 5)
+
+        self.submenu.place(x=x, y=y)
+
+    def _hide_playlist_submenu(self):
+        if self.submenu:
+            self.submenu.place_forget()
+            self.submenu = None
