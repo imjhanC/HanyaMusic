@@ -416,3 +416,94 @@ class FirebaseManager:
         except Exception as e:
             print(f"Error getting user playlists: {str(e)}")
             return []
+            
+    def update_playlist_name(self, username: str, old_name: str, new_name: str) -> bool:
+        """Update the name of a playlist for a user.
+        
+        Args:
+            username: Username of the user
+            old_name: Current name of the playlist
+            new_name: New name for the playlist
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                playlists = user_data.get('playlists', [])
+                
+                # Find the playlist with the old name
+                for i, playlist in enumerate(playlists):
+                    if playlist.get('name') == old_name:
+                        # Update the playlist name
+                        playlists[i]['name'] = new_name
+                        
+                        # Update the document
+                        doc.reference.update({
+                            'playlists': playlists,
+                        })
+                        print(f"Updated playlist name from '{old_name}' to '{new_name}' for user {username}")
+                        return True
+                
+                print(f"Playlist '{old_name}' not found for user {username}")
+                return False
+            
+            print(f"No playlists document found for user {username}")
+            return False
+            
+        except Exception as e:
+            print(f"Error updating playlist name: {str(e)}")
+            return False
+            
+    def delete_playlist(self, username: str, playlist_name: str) -> bool:
+        """Delete a playlist for a user.
+        
+        Args:
+            username: Username of the user
+            playlist_name: Name of the playlist to delete
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            encrypted_username = self._encrypt_data(username)
+            playlists_ref = self.db.collection('playlists')
+            user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
+            
+            for doc in user_docs:
+                user_data = doc.to_dict()
+                playlists = user_data.get('playlists', [])
+                
+                # Find and remove the playlist
+                for i, playlist in enumerate(playlists):
+                    if playlist.get('name') == playlist_name:
+                        # Remove the playlist
+                        playlists.pop(i)
+                        
+                        # If no more playlists, delete the entire document
+                        if not playlists:
+                            doc.reference.delete()
+                            print(f"Removed last playlist for user {username}, deleted user collection")
+                        else:
+                            # Update the document with remaining playlists
+                            doc.reference.update({
+                                'playlists': playlists,
+                            })
+                            print(f"Playlist '{playlist_name}' deleted for user {username}")
+                        
+                        return True
+                
+                print(f"Playlist '{playlist_name}' not found for user {username}")
+                return False
+            
+            print(f"No playlists document found for user {username}")
+            return False
+            
+        except Exception as e:
+            print(f"Error deleting playlist: {str(e)}")
+            return False

@@ -1011,7 +1011,19 @@ class App(ctk.CTk):
     def save_inline_edit(self, card, playlist, index, entry):
         """Save the inline edit"""
         new_name = entry.get().strip()
-        if new_name and new_name != playlist["name"]:
+        old_name = playlist["name"]
+        
+        if new_name and new_name != old_name:
+            # Update in Firebase if user is logged in and it's not the default playlist
+            if self.logged_in and not playlist["is_default"]:
+                firebase = FirebaseManager()
+                success = firebase.update_playlist_name(self.current_user, old_name, new_name)
+                if success:
+                    print(f"Updated playlist name from '{old_name}' to '{new_name}' in Firebase")
+                else:
+                    print(f"Failed to update playlist name in Firebase")
+            
+            # Update locally regardless of Firebase success
             playlist["name"] = new_name
             self.refresh_playlist_cards()
         else:
@@ -1097,7 +1109,19 @@ class App(ctk.CTk):
         if index >= len(self.playlists) or self.playlists[index]["is_default"]:
             return
         
-        # Remove the playlist
+        playlist = self.playlists[index]
+        playlist_name = playlist["name"]
+        
+        # Delete from Firebase if user is logged in
+        if self.logged_in:
+            firebase = FirebaseManager()
+            success = firebase.delete_playlist(self.current_user, playlist_name)
+            if success:
+                print(f"Deleted playlist '{playlist_name}' from Firebase")
+            else:
+                print(f"Failed to delete playlist '{playlist_name}' from Firebase")
+        
+        # Remove the playlist locally regardless of Firebase success
         self.playlists.pop(index)
         
         # Smoothly refresh only the playlist cards
