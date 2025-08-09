@@ -112,21 +112,70 @@ class SearchScreen(ctk.CTkFrame):
         """Set callback function to be called when adding song to playlist"""
         self.add_to_playlist_callback = callback
     
+    def _on_play_button_clicked(self, card, result):
+        """Handle play button click - separated for cleaner code"""
+        print(f"DEBUG: Play button clicked for: {result.get('title', 'Unknown')}")
+        
+        # Check if menu is open and interfering
+        if getattr(self, '_menu_open', False):
+            print("Menu is open, hiding menus first")
+            self._hide_all_menus()
+            # Try again after hiding menus
+            self.after(50, lambda: self._on_play_button_clicked(card, result))
+            return
+        
+        try:
+            self._select_card(card)
+            self._on_song_selected(result)
+        except Exception as e:
+            print(f"Error in play button: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def _on_song_selected(self, song_data):
         """Called when a song is selected from the search results"""
+        print(f"DEBUG: _on_song_selected called with song: {song_data.get('title', 'Unknown')}")
+        
+        # Check if menu is open and interfering
+        if getattr(self, '_menu_open', False):
+            print("Menu is open, hiding menus first")
+            self._hide_all_menus()
+            # Try again after hiding menus
+            self.after(50, lambda: self._on_song_selected(song_data))
+            return
+        
         if self.song_selection_callback:
-            # Find the index of the selected song in the current results
-            current_index = 0
-            for i, result in enumerate(self.results):
-                if result.get('videoId') == song_data.get('videoId'):
-                    current_index = i
-                    break
-            
-            # Call the callback with song data, playlist, and current index
-            self.song_selection_callback(song_data, self.results, current_index)
+            try:
+                # Find the index of the selected song in the current results
+                current_index = 0
+                for i, result in enumerate(self.results):
+                    if result.get('videoId') == song_data.get('videoId'):
+                        current_index = i
+                        break
+                
+                print(f"DEBUG: Calling song_selection_callback with index: {current_index}")
+                # Call the callback with song data, playlist, and current index
+                self.song_selection_callback(song_data, self.results, current_index)
+                print("DEBUG: song_selection_callback completed successfully")
+            except Exception as e:
+                print(f"ERROR: Exception in _on_song_selected: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("ERROR: song_selection_callback is None - not set properly")
     
     def _on_like_button_clicked(self, song_data, like_button):
         """Handle like button click"""
+        print(f"DEBUG: _on_like_button_clicked called for: {song_data.get('title', 'Unknown')}")
+        
+        # Check if menu is open and interfering
+        if getattr(self, '_menu_open', False):
+            print("Menu is open, hiding menus first")
+            self._hide_all_menus()
+            # Try again after hiding menus
+            self.after(50, lambda: self._on_like_button_clicked(song_data, like_button))
+            return
+        
         if not self.current_user or not self.firebase_manager:
             print("User not logged in")
             return
@@ -575,7 +624,7 @@ class SearchScreen(ctk.CTkFrame):
                 hover_color=like_hover,
                 text_color="#FFFFFF",
                 font=like_font,
-                command=lambda r=result: self._on_like_button_clicked(r, like_button)
+                command=lambda: self._on_like_button_clicked(result, like_button)  # Simplified command
             )
             like_button.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=15, sticky="nsew")
         
@@ -592,11 +641,11 @@ class SearchScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=20, weight="bold"),
             border_width=0,
             border_spacing=0,
-            command=lambda c=card, r=result: (self._select_card(c), self._on_song_selected(r))
+            command=lambda: self._on_play_button_clicked(card, result)  # Simplified command
         )
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
-        # Hover + right-click across entire card area
+        # Hover + right-click across entire card area (FIXED - excludes buttons)
         hover_on = self._card_color_hover
         hover_off = self._card_color_default
 
@@ -617,6 +666,10 @@ class SearchScreen(ctk.CTkFrame):
                 set_hover(False)
 
         def bind_recursive(widget):
+            # FIXED: Skip buttons to avoid event conflicts
+            if isinstance(widget, ctk.CTkButton):
+                return
+                
             widget.bind("<Enter>", on_enter)
             widget.bind("<Leave>", on_leave)
             widget.bind("<Button-3>", lambda ev: self._on_right_click(ev, result))
@@ -626,9 +679,13 @@ class SearchScreen(ctk.CTkFrame):
         if self.current_user:
             bind_recursive(card)
 
-        # Allow selecting a card with left-click
+        # Allow selecting a card with left-click (but exclude buttons) - FIXED
         def bind_select_recursive(widget):
-            widget.bind("<Button-1>", lambda ev, c=card: self._select_card(c))
+            # FIXED: Skip buttons to avoid event conflicts
+            if isinstance(widget, ctk.CTkButton):
+                return
+                
+            widget.bind("<Button-1>", lambda ev: self._select_card(card))
             for child in widget.winfo_children():
                 bind_select_recursive(child)
 

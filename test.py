@@ -1683,32 +1683,42 @@ class App(ctk.CTk):
     
     def on_song_selected(self, song_data, playlist, current_index):
         """Called when a song is selected from the search results"""
-        # Update the current playlist and song index
-        self.current_playlist = playlist
-        self.current_song_index = current_index
+        print(f"DEBUG: on_song_selected called with song: {song_data.get('title', 'Unknown')}")
         
-        # Show the music player frame
-        self.music_player_frame.grid()
-        
-        # Create or update the music player
-        if self.music_player:
-            # Update existing player with new song
-            self.music_player.set_playlist(playlist, current_index)
-        else:
-            # Create new music player
-            from playerClass import MusicPlayerContainer
-            self.music_player = MusicPlayerContainer(self.music_player_frame, song_data, playlist, current_index)
-            self.music_player.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        try:
+            # Update the current playlist and song index
+            self.current_playlist = playlist
+            self.current_song_index = current_index
             
-            # Set callback for song changes
-            self.music_player.set_on_song_change_callback(self.on_song_change)
-            # Set callback for when player is closed
-            self.music_player.set_on_close_callback(self.hide_music_player)
-        
-        # Update the layout to accommodate the music player
-        self.update_idletasks()
-        
-        print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {current_index})")
+            print("DEBUG: Showing music player frame")
+            # Show the music player frame
+            self.music_player_frame.grid()
+            
+            # Create or update the music player
+            if self.music_player:
+                print("DEBUG: Updating existing music player")
+                # Update existing player with new song
+                self.music_player.set_playlist(playlist, current_index)
+            else:
+                print("DEBUG: Creating new music player")
+                # Create new music player
+                from playerClass import MusicPlayerContainer
+                self.music_player = MusicPlayerContainer(self.music_player_frame, song_data, playlist, current_index)
+                self.music_player.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+                
+                # Set callback for song changes
+                self.music_player.set_on_song_change_callback(self.on_song_change)
+                # Set callback for when player is closed
+                self.music_player.set_on_close_callback(self.hide_music_player)
+            
+            # Update the layout to accommodate the music player
+            self.update_idletasks()
+            
+            print(f"Now playing: {song_data.get('title', 'Unknown Title')} (index: {current_index})")
+        except Exception as e:
+            print(f"ERROR: Exception in on_song_selected: {e}")
+            import traceback
+            traceback.print_exc()
     
     def on_song_change(self, index, song_data):
         """Callback when song changes in the player"""
