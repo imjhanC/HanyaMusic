@@ -1646,6 +1646,9 @@ class App(ctk.CTk):
         # Set song selection callback
         self.search_screen.set_song_selection_callback(self.on_song_selected)
         
+        # Set add to playlist callback
+        self.search_screen.set_add_to_playlist_callback(self.add_song_to_playlist)
+        
         # Remove focus from search bar and stop listening to keyboard
         self.focus_set()  # Move focus to main window
         self.searchbar.unbind('<KeyRelease>')

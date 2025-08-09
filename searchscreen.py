@@ -24,6 +24,9 @@ class SearchScreen(ctk.CTkFrame):
         # Song selection callback
         self.song_selection_callback = None
         
+        # Add playlist callback
+        self.add_to_playlist_callback = None
+        
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True, padx=0, pady=0)
@@ -93,6 +96,10 @@ class SearchScreen(ctk.CTkFrame):
         """Set callback function to be called when a song is selected"""
         self.song_selection_callback = callback
     
+    def set_add_to_playlist_callback(self, callback):
+        """Set callback function to be called when adding song to playlist"""
+        self.add_to_playlist_callback = callback
+    
     def _on_song_selected(self, song_data):
         """Called when a song is selected from the search results"""
         if self.song_selection_callback:
@@ -134,6 +141,170 @@ class SearchScreen(ctk.CTkFrame):
             print(message)
         else:
             print(f"Error: {message}")
+    
+    def _on_right_click(self, event, song_data):
+        """Handle right-click on song card to show context menu"""
+        if not self.current_user or not self.add_to_playlist_callback:
+            return
+        
+        # Create context menu
+        self._show_context_menu(event, song_data)
+    
+    def _show_context_menu(self, event, song_data):
+        """Show context menu for adding song to playlist"""
+        # Create floating menu frame
+        self.context_menu = ctk.CTkFrame(
+            self,
+            width=250,
+            corner_radius=10,
+            fg_color="#2a2a2a",
+            border_width=1,
+            border_color="#444444"
+        )
+        
+        # Get window dimensions
+        window_width = self.winfo_width()
+        window_height = self.winfo_height()
+        menu_width = 250
+        menu_height = 200  # Approximate height
+        
+        # Get cursor position relative to the window
+        cursor_x = event.x
+        cursor_y = event.y
+        
+        # Position menu to the right of cursor
+        menu_x = cursor_x + 5
+        menu_y = cursor_y
+        
+        # If not enough space on the right, position to the left
+        if menu_x + menu_width > window_width:
+            menu_x = cursor_x - menu_width - 5
+        
+        # Adjust vertical position if menu goes below window
+        if menu_y + menu_height > window_height:
+            menu_y = window_height - menu_height - 10
+        
+        # Ensure menu doesn't go above window
+        if menu_y < 0:
+            menu_y = 10
+        
+        self.context_menu.place(x=menu_x, y=menu_y)
+        self.context_menu.lift()
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            self.context_menu,
+            text="Add to Playlist",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        title_label.pack(pady=(15, 5))
+        
+        # Song info
+        song_info_label = ctk.CTkLabel(
+            self.context_menu,
+            text=song_data.get('title', 'Unknown Song')[:30] + "..." if len(song_data.get('title', '')) > 30 else song_data.get('title', 'Unknown Song'),
+            font=ctk.CTkFont(size=12),
+            text_color="#888888"
+        )
+        song_info_label.pack(pady=(0, 15))
+        
+        # Get user playlists
+        playlists = self.firebase_manager.get_user_playlists(self.current_user)
+        
+        if not playlists:
+            # Show message if no playlists
+            no_playlist_label = ctk.CTkLabel(
+                self.context_menu,
+                text="No playlists found.\nCreate a playlist first.",
+                font=ctk.CTkFont(size=12),
+                text_color="#888888"
+            )
+            no_playlist_label.pack(pady=15)
+        else:
+            # Create scrollable frame for playlists
+            canvas = ctk.CTkCanvas(self.context_menu, bg="#2a2a2a", highlightthickness=0, height=120)
+            scrollbar = ctk.CTkScrollbar(self.context_menu, orientation="vertical", command=canvas.yview)
+            scrollable_frame = ctk.CTkFrame(canvas, fg_color="transparent")
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            canvas.pack(side="left", fill="both", expand=True, padx=10, pady=5)
+            scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=5)
+            
+            # Add playlist options
+            for i, playlist in enumerate(playlists):
+                playlist_btn = ctk.CTkButton(
+                    scrollable_frame,
+                    text=playlist["name"],
+                    font=ctk.CTkFont(size=12),
+                    fg_color="#333333",
+                    hover_color="#444444",
+                    anchor="w",
+                    command=lambda p=playlist, s=song_data: self._add_to_playlist(p, s),
+                    height=30
+                )
+                playlist_btn.pack(fill="x", padx=5, pady=1)
+            
+            # Update canvas scroll region
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        # Cancel button
+        cancel_btn = ctk.CTkButton(
+            self.context_menu,
+            text="Cancel",
+            font=ctk.CTkFont(size=12),
+            fg_color="#666666",
+            hover_color="#777777",
+            command=self._hide_context_menu,
+            height=30
+        )
+        cancel_btn.pack(pady=(10, 15))
+        
+        # Bind click outside to close menu - bind to the main window
+        self.winfo_toplevel().bind("<Button-1>", self._on_window_click_context_menu)
+
+    def _hide_context_menu(self):
+        """Hide the context menu"""
+        if hasattr(self, 'context_menu'):
+            self.context_menu.place_forget()
+            self.context_menu = None
+            # Unbind the click handler
+            self.winfo_toplevel().unbind("<Button-1>")
+
+    def _on_window_click_context_menu(self, event):
+        """Handle clicks outside the context menu to close it"""
+        if hasattr(self, 'context_menu') and self.context_menu:
+            # Get the widget that was clicked
+            clicked_widget = event.widget
+            
+            # Check if the click was outside the context menu
+            if clicked_widget != self.context_menu and not self.context_menu.winfo_containing(event.x_root, event.y_root):
+                self._hide_context_menu()
+
+    def _add_to_playlist(self, playlist, song_data):
+        """Add song to selected playlist"""
+        if self.add_to_playlist_callback:
+            self.add_to_playlist_callback(song_data, playlist)
+        
+        # Show success message
+        success_label = ctk.CTkLabel(
+            self.context_menu,
+            text=f"✓ Added to '{playlist['name']}'",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#1DB954"
+        )
+        success_label.pack(pady=5)
+        
+        # Hide menu after a short delay
+        self.after(1500, self._hide_context_menu)
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
@@ -352,6 +523,35 @@ class SearchScreen(ctk.CTkFrame):
         )
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
+        # Hover + right-click across entire card area
+        hover_on_color = "#333333"
+        hover_off_color = "#222222"
+
+        def set_hover(is_on: bool):
+            color = hover_on_color if is_on else hover_off_color
+            card.configure(fg_color=color)
+            # paint inner frames too so the whole card looks hovered
+            content_frame.configure(fg_color=color if is_on else "transparent")
+            thumb_container.configure(fg_color=color if is_on else "transparent")
+
+        def on_enter(_):
+            set_hover(True)
+
+        def on_leave(e):
+            w = self.winfo_containing(e.x_root, e.y_root)
+            if not w or not self._is_descendant_of(w, card):
+                set_hover(False)
+
+        def bind_recursive(widget):
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+            widget.bind("<Button-3>", lambda ev: self._on_right_click(ev, result))
+            for child in widget.winfo_children():
+                bind_recursive(child)
+
+        if self.current_user:
+            bind_recursive(card)
+
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:
             separator = ctk.CTkFrame(
@@ -382,3 +582,10 @@ class SearchScreen(ctk.CTkFrame):
         if hasattr(self, '_video_ids'):
             return list(self._video_ids)
         return []
+
+    def _is_descendant_of(self, widget, parent):
+        while widget is not None:
+            if widget == parent:
+                return True
+            widget = widget.master
+        return False
