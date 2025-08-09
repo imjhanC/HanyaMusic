@@ -404,6 +404,11 @@ class SearchScreen(ctk.CTkFrame):
                     text_color="#1DB954"
                 ).pack(pady=5)
             print(message)
+            
+            # NEW: Notify parent app to refresh playlist data
+            if hasattr(self, 'playlist_update_callback') and self.playlist_update_callback:
+                self.playlist_update_callback()
+                
         else:
             # Show error message in context menu
             if self.context_menu:
@@ -941,3 +946,7 @@ class SearchScreen(ctk.CTkFrame):
         if self.submenu:
             self.submenu.place_forget()
             self.submenu = None
+    
+    def set_playlist_update_callback(self, callback):
+        """Set callback function to be called when playlist is updated"""
+        self.playlist_update_callback = callback

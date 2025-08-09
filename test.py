@@ -1673,6 +1673,9 @@ class App(ctk.CTk):
         # Set add to playlist callback
         self.search_screen.set_add_to_playlist_callback(self.add_song_to_playlist)
         
+        # NEW: Set playlist update callback to refresh counts
+        self.search_screen.set_playlist_update_callback(self.on_playlist_updated)
+        
         # Remove focus from search bar and stop listening to keyboard
         self.focus_set()  # Move focus to main window
         self.searchbar.unbind('<KeyRelease>')
@@ -1884,6 +1887,19 @@ class App(ctk.CTk):
         """Cleanup when app is destroyed"""
         if hasattr(self, 'search_executor'):
             self.search_executor.shutdown(wait=False)
+
+    def on_playlist_updated(self):
+        """Called when a playlist is updated (song added/removed)"""
+        print("Playlist updated - refreshing playlist data")
+        
+        # Reload playlists from Firebase to get updated counts
+        self.load_playlists_from_firebase()
+        
+        # Only refresh the playlist cards if we're currently showing the main frame
+        if hasattr(self, 'playlist_cards_frame') and self.playlist_cards_frame.winfo_exists():
+            # Check if the main frame is currently showing playlists (not search results)
+            if self.playlist_cards_frame.winfo_viewable():
+                self.refresh_playlist_cards()
 
 if __name__ == "__main__":
     app = App()
