@@ -21,6 +21,12 @@ class SearchScreen(ctk.CTkFrame):
         self._resize_in_progress = False
         self._resize_after_id = None
         
+        # Selection state and colors
+        self._selected_card = None
+        self._card_color_default = "#222222"
+        self._card_color_hover = "#333333"
+        self._card_color_selected = "#444444"
+        
         # Song selection callback
         self.song_selection_callback = None
         
@@ -150,6 +156,13 @@ class SearchScreen(ctk.CTkFrame):
     
     def _on_right_click(self, event, song_data):
         """Handle right-click on song card to show context menu"""
+        # Select the card that was right-clicked
+        try:
+            card = self._get_card_from_event(event)
+            if card is not None:
+                self._select_card(card)
+        except Exception:
+            pass
         if not self.current_user or not self.add_to_playlist_callback:
             return
         
@@ -158,8 +171,7 @@ class SearchScreen(ctk.CTkFrame):
     
     def _show_context_menu(self, event, song_data):
         # Close previous menus
-        self._hide_playlist_submenu()
-        self._hide_context_menu()
+        self._hide_all_menus()
 
         # Build primary menu
         self.context_menu = ctk.CTkFrame(
@@ -195,7 +207,7 @@ class SearchScreen(ctk.CTkFrame):
         add_row.pack(fill="x", padx=10, pady=(10, 5))
 
         left = ctk.CTkLabel(add_row, text="Add to playlist", font=ctk.CTkFont(size=14), text_color="#FFFFFF")
-        right = ctk.CTkLabel(add_row, text=">", font=ctk.CTkFont(size=14, weight="bold"), text_color="#BBBBBB")
+        right = ctk.CTkLabel(add_row, text="❯", font=ctk.CTkFont(size=14, weight="bold"), text_color="#BBBBBB")
         left.pack(side="left")
         right.pack(side="right")
 
@@ -222,7 +234,7 @@ class SearchScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=14),
             fg_color="#666666",
             hover_color="#777777",
-            command=self._hide_context_menu,
+            command=self._hide_all_menus,
             height=30
         )
         cancel_btn.pack(fill="x", padx=10, pady=(0, 10))
@@ -231,25 +243,94 @@ class SearchScreen(ctk.CTkFrame):
         self._menu_open = True
         self._disable_scrolling()
 
-        # Close on outside click
-        self.winfo_toplevel().bind("<Button-1>", self._on_window_click_context_menu)
+        # Close on outside click - bind to all possible parent widgets
+        self._bind_outside_click_handlers()
 
-    def _hide_context_menu(self):
+    def _bind_outside_click_handlers(self):
+        """Bind click handlers to detect clicks outside menus"""
+        # Get the toplevel window
+        toplevel = self.winfo_toplevel()
+        
+        # Bind to various widgets to catch all click events
+        widgets_to_bind = [
+            toplevel,
+            self,
+            self.main_container,
+            self.canvas_container,
+            self.canvas,
+            self.scrollable_frame
+        ]
+        
+        for widget in widgets_to_bind:
+            try:
+                widget.bind("<Button-1>", self._on_window_click_check_menus, add=True)
+                widget.bind("<Button-3>", self._on_window_click_check_menus, add=True)
+            except:
+                pass
+
+    def _unbind_outside_click_handlers(self):
+        """Unbind click handlers when menus are closed"""
+        toplevel = self.winfo_toplevel()
+        
+        widgets_to_unbind = [
+            toplevel,
+            self,
+            self.main_container,
+            self.canvas_container,
+            self.canvas,
+            self.scrollable_frame
+        ]
+        
+        for widget in widgets_to_unbind:
+            try:
+                widget.unbind("<Button-1>")
+                widget.unbind("<Button-3>")
+            except:
+                pass
+
+    def _hide_all_menus(self):
+        """Hide both context menu and submenu"""
         self._hide_playlist_submenu()
         if self.context_menu:
             self.context_menu.place_forget()
             self.context_menu = None
         self._menu_open = False
         self._enable_scrolling()
-        self.winfo_toplevel().unbind("<Button-1>")
+        self._unbind_outside_click_handlers()
 
-    def _on_window_click_context_menu(self, event):
-        if not self.context_menu:
+    def _hide_context_menu(self):
+        """Legacy method - now calls _hide_all_menus for consistency"""
+        self._hide_all_menus()
+
+    def _on_window_click_check_menus(self, event):
+        """Check if click is outside both menus and close them if so"""
+        if not self.context_menu and not self.submenu:
             return
-        in_primary = self.context_menu.winfo_containing(event.x_root, event.y_root) is not None
-        in_sub = self.submenu and self.submenu.winfo_containing(event.x_root, event.y_root) is not None
-        if not in_primary and not in_sub:
-            self._hide_context_menu()
+        
+        try:
+            # Get the widget that was clicked
+            clicked_widget = self.winfo_containing(event.x_root, event.y_root)
+            
+            # Check if click is inside context menu
+            in_context_menu = False
+            if self.context_menu:
+                in_context_menu = (clicked_widget == self.context_menu or 
+                                 self._is_descendant_of(clicked_widget, self.context_menu))
+            
+            # Check if click is inside submenu
+            in_submenu = False
+            if self.submenu:
+                in_submenu = (clicked_widget == self.submenu or 
+                             self._is_descendant_of(clicked_widget, self.submenu))
+            
+            # If click is outside both menus, close them
+            if not in_context_menu and not in_submenu:
+                self._hide_all_menus()
+                
+        except Exception as e:
+            # If there's any error in detection, just close menus to be safe
+            print(f"Error in click detection: {e}")
+            self._hide_all_menus()
 
     def _add_to_playlist(self, playlist, song_data):
         if hasattr(self, 'add_to_playlist_callback') and self.add_to_playlist_callback:
@@ -261,7 +342,7 @@ class SearchScreen(ctk.CTkFrame):
                 font=ctk.CTkFont(size=12, weight="bold"),
                 text_color="#1DB954"
             ).pack(pady=5)
-        self.after(900, self._hide_context_menu)
+        self.after(900, self._hide_all_menus)
     
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
@@ -352,13 +433,16 @@ class SearchScreen(ctk.CTkFrame):
         # Create main card frame with dynamic width
         card = ctk.CTkFrame(
             self.scrollable_frame,
-            fg_color="#222222",
+            fg_color=self._card_color_default,
             corner_radius=10,
             height=100
         )
         
         # Store card reference
         card._title = None  # Will store the title widget reference
+        card._content_frame = None
+        card._thumb_container = None
+        card._is_selected = False
         
         # Configure grid for the card to take full width
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
@@ -370,6 +454,7 @@ class SearchScreen(ctk.CTkFrame):
         thumb_container = ctk.CTkFrame(card, fg_color="transparent", width=120, height=80)
         thumb_container.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
         thumb_container.grid_propagate(False)  # Prevent container from resizing
+        card._thumb_container = thumb_container
         
         # Thumbnail label
         thumb = ctk.CTkLabel(thumb_container, text="")
@@ -396,6 +481,7 @@ class SearchScreen(ctk.CTkFrame):
         content_frame = ctk.CTkFrame(card, fg_color="transparent")
         content_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(0, 20), pady=10)
         content_frame.columnconfigure(0, weight=1)
+        card._content_frame = content_frame
         
         # Title with dynamic wrapping
         title = ctk.CTkLabel(
@@ -477,15 +563,18 @@ class SearchScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=20, weight="bold"),
             border_width=0,
             border_spacing=0,
-            command=lambda: self._on_song_selected(result)
+            command=lambda c=card, r=result: (self._select_card(c), self._on_song_selected(r))
         )
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
         # Hover + right-click across entire card area
-        hover_on = "#333333"
-        hover_off = "#222222"
+        hover_on = self._card_color_hover
+        hover_off = self._card_color_default
 
         def set_hover(is_on: bool):
+            # Avoid overriding selection
+            if getattr(card, "_is_selected", False):
+                return
             color = hover_on if is_on else hover_off
             card.configure(fg_color=color)
             content_frame.configure(fg_color=color if is_on else "transparent")
@@ -507,6 +596,14 @@ class SearchScreen(ctk.CTkFrame):
 
         if self.current_user:
             bind_recursive(card)
+
+        # Allow selecting a card with left-click
+        def bind_select_recursive(widget):
+            widget.bind("<Button-1>", lambda ev, c=card: self._select_card(c))
+            for child in widget.winfo_children():
+                bind_select_recursive(child)
+
+        bind_select_recursive(card)
 
         # Add a separator between items
         if idx < len(self.results) - 1 or idx < len(self.cards) + len(self.results) - 1:
@@ -545,6 +642,59 @@ class SearchScreen(ctk.CTkFrame):
                 return True
             widget = widget.master
         return False
+
+    def _get_card_from_event(self, event):
+        """Return the enclosing card (from self.cards) for a given event, if any."""
+        widget = getattr(event, "widget", None)
+        while widget is not None:
+            if widget in self.cards:
+                return widget
+            widget = getattr(widget, "master", None)
+        # Fallback via pointer position
+        try:
+            under_pointer = self.winfo_containing(event.x_root, event.y_root)
+            widget = under_pointer
+            while widget is not None:
+                if widget in self.cards:
+                    return widget
+                widget = getattr(widget, "master", None)
+        except Exception:
+            pass
+        return None
+
+    def _set_card_selected_visual(self, card, selected):
+        """Apply or clear selected visuals for a card and its inner containers."""
+        if card is None or not hasattr(card, "winfo_exists") or not card.winfo_exists():
+            return
+        card._is_selected = bool(selected)
+        if selected:
+            try:
+                card.configure(fg_color=self._card_color_selected)
+                if hasattr(card, "_content_frame") and card._content_frame.winfo_exists():
+                    card._content_frame.configure(fg_color=self._card_color_selected)
+                if hasattr(card, "_thumb_container") and card._thumb_container.winfo_exists():
+                    card._thumb_container.configure(fg_color=self._card_color_selected)
+            except Exception:
+                pass
+        else:
+            try:
+                card.configure(fg_color=self._card_color_default)
+                if hasattr(card, "_content_frame") and card._content_frame.winfo_exists():
+                    card._content_frame.configure(fg_color="transparent")
+                if hasattr(card, "_thumb_container") and card._thumb_container.winfo_exists():
+                    card._thumb_container.configure(fg_color="transparent")
+            except Exception:
+                pass
+
+    def _select_card(self, card):
+        """Select the given card and clear any previous selection."""
+        if card is self._selected_card:
+            self._set_card_selected_visual(card, True)
+            return
+        if self._selected_card is not None:
+            self._set_card_selected_visual(self._selected_card, False)
+        self._selected_card = card
+        self._set_card_selected_visual(card, True)
 
     def _cancel_hide_submenu(self):
         if hasattr(self, '_submenu_timer') and self._submenu_timer:
