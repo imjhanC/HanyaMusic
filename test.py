@@ -802,19 +802,12 @@ class App(ctk.CTk):
         icon_label.pack(pady=(0, 15))
         
         # Playlist name and edit button container
-        name_container = ctk.CTkFrame(content_frame, fg_color="transparent")
+        name_container = ctk.CTkFrame(content_frame, fg_color="transparent", height=30)
         name_container.pack(fill="x", pady=(0, 8))
+        name_container.pack_propagate(False)
         
-        # Playlist name
-        name_label = ctk.CTkLabel(
-            name_container,
-            text=playlist["name"],
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color="#FFFFFF"
-        )
-        name_label.pack(side="left", fill="x", expand=True)
-        
-        # Edit button (only for non-default playlists)
+        # Edit button (only for non-default playlists) - create first to reserve space
+        edit_btn = None
         if not playlist["is_default"]:
             edit_btn = ctk.CTkButton(
                 name_container,
@@ -824,11 +817,56 @@ class App(ctk.CTk):
                 font=ctk.CTkFont(size=12),
                 fg_color="#444444",
                 hover_color="#555555",
-                command=lambda: self.start_inline_edit(card, playlist, index)
+                command=lambda: self.start_inline_edit_with_marquee_stop(card, playlist, index, name_label)
             )
-            edit_btn.pack(side="right", padx=(5, 0))
+            edit_btn.pack(side="right")
             # Prevent event propagation on edit button
             edit_btn.bind("<Button-1>", lambda e: e.widget.focus_set())
+        
+        # Container for the name label that will handle marquee (with proper width calculation)
+        name_label_container = ctk.CTkFrame(name_container, fg_color="transparent")
+        if edit_btn:
+            # Leave space for edit button (30px width + 5px padding)
+            name_label_container.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        else:
+            name_label_container.pack(side="left", fill="x", expand=True)
+        
+        # Playlist name with marquee effect
+        playlist_name = playlist["name"]
+        name_label = ctk.CTkLabel(
+            name_label_container,
+            text=playlist_name,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#FFFFFF",
+            anchor="w"
+        )
+        name_label.pack(fill="x")
+        
+        # Store reference to original playlist name for editing
+        name_label.original_text = playlist_name
+        
+        # Check if text is too long and add marquee effect
+        def check_and_setup_marquee():
+            # Update the widget to get accurate measurements
+            name_label_container.update_idletasks()
+            name_label.update_idletasks()
+            
+            # Get the actual width of the container and required text width
+            container_width = name_label_container.winfo_width()
+            
+            # Use a temporary label to measure text width
+            temp_label = ctk.CTkLabel(name_label_container, text=playlist_name, font=ctk.CTkFont(size=18, weight="bold"))
+            temp_label.pack()
+            temp_label.update_idletasks()
+            text_width = temp_label.winfo_reqwidth()
+            temp_label.destroy()
+            
+            # If text is too long, start marquee effect
+            if text_width > container_width and container_width > 0:
+                self.start_marquee_effect(name_label, playlist_name, container_width)
+        
+        # Schedule marquee check after widget is properly rendered
+        self.after(100, check_and_setup_marquee)
         
         # Song count - use Firebase for "Saved Songs", local count for other playlists
         if playlist["is_default"] and self.logged_in:
@@ -904,6 +942,151 @@ class App(ctk.CTk):
                 name_container.bind("<Double-Button-1>", lambda event, p=playlist: self.show_playlist_songs(p))
         
         return card
+
+    def start_inline_edit_with_marquee_stop(self, card, playlist, index, name_label):
+        """Start inline editing of playlist name and stop marquee effect"""
+        # Stop marquee effect first
+        self.stop_marquee_effect(name_label)
+        
+        # Find the name container in the card
+        content_frame = card.winfo_children()[0]  # Get the content frame
+        name_container = None
+        
+        # Find the name container
+        for widget in content_frame.winfo_children():
+            if isinstance(widget, ctk.CTkFrame) and len(widget.winfo_children()) > 0:
+                # Check if this frame contains the name label container and edit button
+                has_label_container = False
+                has_edit_button = False
+                for child in widget.winfo_children():
+                    if isinstance(child, ctk.CTkFrame):  # name_label_container
+                        has_label_container = True
+                    elif isinstance(child, ctk.CTkButton) and child.cget("text") == "✏":
+                        has_edit_button = True
+                if has_label_container and (has_edit_button or playlist["is_default"]):
+                    name_container = widget
+                    break
+        
+        if not name_container:
+            return
+        
+        # Clear the name container
+        for widget in name_container.winfo_children():
+            widget.destroy()
+        
+        # Create entry field that takes most of the space
+        entry = ctk.CTkEntry(
+            name_container,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            fg_color="#333333",
+            text_color="#FFFFFF",
+            border_color="#1DB954",
+            border_width=2
+        )
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        entry.insert(0, playlist["name"])
+        entry.select_range(0, 'end')
+        entry.focus_set()
+        
+        # Create save button
+        save_btn = ctk.CTkButton(
+            name_container,
+            text="✓",
+            width=25,
+            height=25,
+            font=ctk.CTkFont(size=14),
+            fg_color="#1DB954",
+            hover_color="#1ed760",
+            command=lambda: self.save_inline_edit(card, playlist, index, entry)
+        )
+        save_btn.pack(side="right")
+        
+        # Bind Enter key to save
+        def on_enter(event):
+            self.save_inline_edit(card, playlist, index, entry)
+        
+        entry.bind('<Return>', on_enter)
+        
+        # Bind Escape key to cancel
+        def on_escape(event):
+            self.cancel_inline_edit(card, playlist, index)
+        
+        entry.bind('<Escape>', on_escape)
+
+    def start_marquee_effect(self, label, original_text, container_width):
+        """Start the marquee scrolling effect for long playlist names - SCROLLS LEFT TO RIGHT"""
+        if not hasattr(self, 'marquee_jobs'):
+            self.marquee_jobs = {}
+        
+        # Stop any existing marquee for this label
+        label_id = str(label)
+        if label_id in self.marquee_jobs:
+            try:
+                self.after_cancel(self.marquee_jobs[label_id])
+            except:
+                pass
+        
+        # Add spacing for smooth scrolling
+        extended_text = "    " + original_text + "    "  # Add spaces at both ends
+        text_length = len(extended_text)
+        
+        def marquee_scroll(position=0):
+            if not label.winfo_exists():
+                return
+                
+            try:
+                # Calculate how many characters can fit
+                char_width = 10  # Approximate character width
+                max_chars = max(1, container_width // char_width)
+                
+                # Create sliding window effect - MOVING LEFT TO RIGHT
+                if position + max_chars < text_length:
+                    # Show text from current position
+                    visible_text = extended_text[position:position + max_chars]
+                    next_position = position + 1
+                else:
+                    # Reset to beginning when we reach the end
+                    visible_text = extended_text[:max_chars]
+                    next_position = 0
+                
+                label.configure(text=visible_text)
+                
+                # Schedule next frame
+                job_id = self.after(200, lambda: marquee_scroll(next_position))
+                self.marquee_jobs[label_id] = job_id
+                
+            except Exception as e:
+                # If there's an error, show truncated original text
+                try:
+                    char_width = 10
+                    max_chars = max(1, container_width // char_width)
+                    display_text = original_text[:max_chars] + "..." if len(original_text) > max_chars else original_text
+                    label.configure(text=display_text)
+                except:
+                    pass
+        
+        # Start the marquee effect
+        marquee_scroll()
+
+    def stop_marquee_effect(self, label):
+        """Stop the marquee effect for a specific label"""
+        if not hasattr(self, 'marquee_jobs'):
+            return
+            
+        label_id = str(label)
+        if label_id in self.marquee_jobs:
+            try:
+                self.after_cancel(self.marquee_jobs[label_id])
+                del self.marquee_jobs[label_id]
+            except:
+                pass
+        
+        # Restore original text if it exists
+        if hasattr(label, 'original_text'):
+            try:
+                label.configure(text=label.original_text)
+            except:
+                pass
 
     def show_saved_songs_playlist(self):
         """Show saved songs playlist using PlaylistScreen"""
