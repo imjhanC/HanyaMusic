@@ -585,6 +585,8 @@ class FirebaseManager:
         """
         try:
             encrypted_username = self._encrypt_data(username)
+            # Convert video_id to URL format for matching (this is what's stored in Firebase)
+            song_url = f"https://www.youtube.com/watch?v={video_id}"
             
             playlists_ref = self.db.collection('playlists')
             user_docs = playlists_ref.where('username', '==', encrypted_username).stream()
@@ -598,9 +600,10 @@ class FirebaseManager:
                     if playlist.get('name') == playlist_name:
                         songs = playlist.get('songs', [])
                         
-                        # Find and remove the song
+                        # Find and remove the song by matching URL
                         for j, song in enumerate(songs):
-                            if song.get('videoId') == video_id:
+                            # Check if the song URL matches
+                            if song.get('url') == song_url:
                                 removed_song = songs.pop(j)
                                 playlists[i]['songs'] = songs
                                 
@@ -609,10 +612,12 @@ class FirebaseManager:
                                     'playlists': playlists,
                                 })
                                 
-                                print(f"Removed song '{removed_song.get('title')}' from playlist '{playlist_name}' for user {username}")
-                                return True, f"Removed '{removed_song.get('title')}' from playlist '{playlist_name}'"
+                                song_title = removed_song.get('title', f"Song with ID {video_id}")
+                                print(f"Removed '{song_title}' from playlist '{playlist_name}' for user {username}")
+                                return True, f"Removed '{song_title}' from playlist '{playlist_name}'"
                         
                         # If we get here, song was not found in playlist
+                        print(f"Song URL '{song_url}' not found in playlist '{playlist_name}'")
                         return False, f"Song not found in playlist '{playlist_name}'"
                 
                 # If we get here, playlist was not found

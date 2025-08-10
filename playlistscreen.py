@@ -1001,7 +1001,7 @@ class PlaylistScreen(ctk.CTkFrame):
         # Unlike/Remove button (different behavior for Saved Songs vs custom playlists)
         if self.playlist_name == "Saved Songs":
             # For Saved Songs, show unlike button
-            unlike_button = ctk.CTkButton(
+            remove_button = ctk.CTkButton(
                 card,
                 text="♥",
                 width=40,
@@ -1011,11 +1011,11 @@ class PlaylistScreen(ctk.CTkFrame):
                 hover_color="#FF5252",
                 text_color="#FFFFFF",
                 font=ctk.CTkFont(size=14),
-                command=lambda: self._on_unlike_button_clicked(song_data, unlike_button)
+                command=lambda: self._on_remove_from_playlist_clicked(song_data, remove_button)
             )
         else:
-            # For custom playlists, show remove button
-            unlike_button = ctk.CTkButton(
+            # For custom playlists, show trash icon
+            remove_button = ctk.CTkButton(
                 card,
                 text="🗑",
                 width=40,
@@ -1025,10 +1025,11 @@ class PlaylistScreen(ctk.CTkFrame):
                 hover_color="#FF5252",
                 text_color="#FFFFFF",
                 font=ctk.CTkFont(size=14),
-                command=lambda: self._on_remove_from_playlist_clicked(song_data, unlike_button)
+                command=lambda: self._on_remove_from_playlist_clicked(song_data, remove_button)
             )
-        
-        unlike_button.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=15, sticky="nsew")
+
+                
+        remove_button.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=15, sticky="nsew")
         
         # Play button (right-aligned)
         play_btn = ctk.CTkButton(
@@ -1086,9 +1087,14 @@ class PlaylistScreen(ctk.CTkFrame):
             self.song_selection_callback(song_data, all_songs, current_index)
     
     def _on_unlike_button_clicked(self, song_data, unlike_button):
-        """Handle unlike button click"""
+        """Handle unlike button click - this method should only be used for Saved Songs"""
         if not self.current_user or not self.firebase_manager:
             print("User not logged in")
+            return
+        
+        # This should only be called for Saved Songs
+        if self.playlist_name != "Saved Songs":
+            print("Unlike button should only be used for Saved Songs")
             return
         
         # Unlike the song
@@ -1141,7 +1147,7 @@ class PlaylistScreen(ctk.CTkFrame):
             return
         
         if self.playlist_name == "Saved Songs":
-            # Remove from liked songs
+            # Remove from liked songs (uses unlike_song method)
             success = self.firebase_manager.unlike_song(self.current_user, video_id)
             if success:
                 print(f"Removed '{song_data.get('title')}' from liked songs")
@@ -1149,7 +1155,7 @@ class PlaylistScreen(ctk.CTkFrame):
             else:
                 print(f"Failed to remove '{song_data.get('title')}' from liked songs")
         else:
-            # Remove from custom playlist
+            # Remove from custom playlist (uses remove_song_from_playlist method)
             success, message = self.firebase_manager.remove_song_from_playlist(
                 self.current_user, 
                 self.playlist_name, 
