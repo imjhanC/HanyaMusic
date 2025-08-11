@@ -1027,7 +1027,7 @@ class App(ctk.CTk):
                 pass
         
         # Add spacing for smooth scrolling
-        extended_text = "    " + original_text + "    "  # Add spaces at both ends
+        extended_text = "       " + original_text + "               "  # Add spaces at both ends
         text_length = len(extended_text)
         
         def marquee_scroll(position=0):
