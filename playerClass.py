@@ -193,7 +193,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Video toggle button (aligned to left) ▲ to show, ▼ to hide
         self.video_toggle_btn = ctk.CTkButton(
             self.header_frame,
-            text="▲",
+            text="▲ Switch to video",
             width=30,
             height=30,
             corner_radius=15,
@@ -479,7 +479,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             self.video_frame = ctk.CTkFrame(self.video_window, fg_color="#000000")
             self.video_frame.pack(fill="both", expand=True)
             self.video_visible = True
-            self.video_toggle_btn.configure(text="▼")
+            self.video_toggle_btn.configure(text="▼ Switch to audio")
             self._position_video_modal()
             # Reposition on parent window moves/resizes
             try:
