@@ -8,6 +8,9 @@ import re
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from FirebaseClass import FirebaseManager
+import time
+import asyncio
+import aiohttp
 
 class PlaylistScreen(ctk.CTkFrame):
     def __init__(self, parent, current_user, song_selection_callback, playlist_name="Saved Songs", back_callback=None, *args, **kwargs):
@@ -27,13 +30,19 @@ class PlaylistScreen(ctk.CTkFrame):
         self._resize_in_progress = False
         self._resize_after_id = None
         
-        # Song data cache
+        # Song data cache with better structure
         self.song_data_cache = {}
         self.loading_songs = False
         
-        # Thread pool for parallel processing
-        self.executor = ThreadPoolExecutor(max_workers=8)
-        self.bind("<Destroy>",self._on_destroy) # clear cache on exiting this page 
+        # Optimized thread pool with more workers for faster parallel processing
+        self.executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="song_loader")
+        self.bind("<Destroy>", self._on_destroy)
+        
+        # Session for connection reuse
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
 
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -158,29 +167,8 @@ class PlaylistScreen(ctk.CTkFrame):
         # Configure canvas scrolling
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
-        # FIX: Bind mouse events to multiple widgets for better coverage
-        # Bind to the main container so scrolling works anywhere in the playlist
-        self.main_container.bind("<MouseWheel>", self._on_mousewheel)
-        self.main_container.bind("<Button-4>", self._on_mousewheel)  # Linux scroll up
-        self.main_container.bind("<Button-5>", self._on_mousewheel)  # Linux scroll down
-        
-        # Also bind to self (the PlaylistScreen frame)
-        self.bind("<MouseWheel>", self._on_mousewheel)
-        self.bind("<Button-4>", self._on_mousewheel)
-        self.bind("<Button-5>", self._on_mousewheel)
-        
-        # Bind to canvas as well
-        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind("<Button-4>", self._on_mousewheel)
-        self.canvas.bind("<Button-5>", self._on_mousewheel)
-        
-        # Bind to scrollable frame
-        self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
-        self.scrollable_frame.bind("<Button-4>", self._on_mousewheel)
-        self.scrollable_frame.bind("<Button-5>", self._on_mousewheel)
-        
-        # Make sure canvas can receive focus
-        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
+        # Mouse wheel binding for scrolling
+        self._bind_mousewheel_events()
         
         # Bind events
         self.canvas.bind("<Configure>", self._on_canvas_configure)
@@ -189,12 +177,29 @@ class PlaylistScreen(ctk.CTkFrame):
         # Initialize cards list
         self.cards = []
         print("[DEBUG] create_content_area completed")
+
+    def _bind_mousewheel_events(self):
+        """Bind mouse wheel events to multiple widgets for better coverage"""
+        widgets_to_bind = [
+            self.main_container, self, self.canvas, self.scrollable_frame
+        ]
+        
+        for widget in widgets_to_bind:
+            widget.bind("<MouseWheel>", self._on_mousewheel)
+            widget.bind("<Button-4>", self._on_mousewheel)  # Linux scroll up
+            widget.bind("<Button-5>", self._on_mousewheel)  # Linux scroll down
+        
+        # Make sure canvas can receive focus
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
     
     def extract_video_id(self, url):
-        """Extract video ID from various YouTube URL formats"""
+        """Extract video ID from various YouTube URL formats - optimized"""
+        # More efficient regex patterns in order of most common first
         patterns = [
-            r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
-            r'youtube\.com/watch\?.*v=([a-zA-Z0-9_-]{11})',
+            r'(?:youtu\.be/)([a-zA-Z0-9_-]{11})',  # Short URLs first (most common)
+            r'(?:youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})',  # Standard watch URLs
+            r'(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})',  # Embed URLs
+            r'(?:youtube\.com/watch\?.*v=)([a-zA-Z0-9_-]{11})',  # URLs with other params
         ]
         
         for pattern in patterns:
@@ -203,18 +208,45 @@ class PlaylistScreen(ctk.CTkFrame):
                 return match.group(1)
         return None
     
-    def get_instant_song_data(self, url):
-        """Extract basic song info instantly from URL and YouTube's basic API"""
-        try:
+    def get_instant_song_data_fast(self, url):
+        """OPTIMIZED: Get song data using fastest possible methods"""
+        video_id = self.extract_video_id(url)
+        if not video_id:
+            return None
+        
+        # Check cache first
+        if video_id in self.song_data_cache:
+            cached_data = self.song_data_cache[video_id]
+            if not cached_data.get('is_loading', False):
+                return cached_data
+        
+        # Create basic structure immediately
+        song_data = {
+            'title': "Loading...",
+            'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
+            'videoId': video_id,
+            'uploader': "Loading...",
+            'duration': "Loading...",
+            'view_count': "Loading...",
+            'url': url,
+            'is_loading': True
+        }
+        
+        return song_data
+    
+    def fetch_song_data_batch_parallel(self, urls, max_workers=20):
+        """OPTIMIZED: Fetch song data for multiple URLs in parallel with improved duration/views extraction"""
+        def fetch_single_fast(url):
             video_id = self.extract_video_id(url)
             if not video_id:
                 return None
             
             # Check cache first
             if video_id in self.song_data_cache:
-                return self.song_data_cache[video_id]
+                cached = self.song_data_cache[video_id]
+                if not cached.get('is_loading', False):
+                    return cached
             
-            # Create basic song data with video ID
             song_data = {
                 'title': "Loading...",
                 'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
@@ -226,294 +258,432 @@ class PlaylistScreen(ctk.CTkFrame):
                 'is_loading': True
             }
             
-            # Try multiple fast methods in parallel
-            import concurrent.futures
-            
-            def get_oembed_data():
+            try:
+                # Method 1: oEmbed API for title and uploader
                 try:
                     oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-                    response = requests.get(oembed_url, timeout=2)
+                    response = self.session.get(oembed_url, timeout=2)
                     if response.status_code == 200:
                         data = response.json()
-                        return {
-                            'title': data.get('title', 'Unknown Title')[:100],
-                            'uploader': data.get('author_name', 'Unknown')[:50]
-                        }
+                        song_data['title'] = data.get('title', 'Unknown Title')[:100]
+                        song_data['uploader'] = data.get('author_name', 'Unknown')[:50]
+                        print(f"[DEBUG] Got oEmbed data for {video_id}: {song_data['title']}")
                 except Exception as e:
-                    print(f"oEmbed failed for {video_id}: {e}")
-                return {}
-            
-            def get_youtube_api_data():
-                """Try to get duration and view count from YouTube's player API (fast)"""
+                    print(f"[DEBUG] oEmbed failed for {video_id}: {e}")
+                
+                # Method 2: Enhanced YouTube page scraping with multiple patterns
                 try:
-                    # YouTube's player config API (faster than yt-dlp)
-                    api_url = f"https://www.youtube.com/watch?v={video_id}"
-                    response = requests.get(api_url, timeout=3, headers={
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    })
-                    
-                    if response.status_code == 200:
-                        content = response.text
-                        
-                        # Extract duration from page source (fast method)
-                        duration_match = re.search(r'"lengthSeconds":"(\d+)"', content)
-                        if duration_match:
-                            duration_seconds = int(duration_match.group(1))
-                            formatted_duration = self.format_duration(duration_seconds)
-                        else:
-                            formatted_duration = None
-                        
-                        # Extract view count from page source
-                        view_match = re.search(r'"viewCount":"(\d+)"', content)
-                        if view_match:
-                            view_count = int(view_match.group(1))
-                            formatted_views = self.format_views(view_count)
-                        else:
-                            formatted_views = None
-                        
-                        return {
-                            'duration': formatted_duration,
-                            'view_count': formatted_views
+                    page_response = self.session.get(
+                        f"https://www.youtube.com/watch?v={video_id}", 
+                        timeout=3,
+                        headers={
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                         }
-                except Exception as e:
-                    print(f"YouTube API scraping failed for {video_id}: {e}")
-                return {}
-            
-            def get_innertube_data():
-                """Alternative fast method using YouTube's internal API"""
-                try:
-                    # YouTube's innertube API (used by the website)
-                    innertube_url = "https://www.youtube.com/youtubei/v1/player"
-                    payload = {
-                        "context": {
-                            "client": {
-                                "clientName": "WEB",
-                                "clientVersion": "2.20231201.01.00"
-                            }
-                        },
-                        "videoId": video_id
-                    }
-                    
-                    response = requests.post(
-                        innertube_url,
-                        json=payload,
-                        timeout=2,
-                        headers={'Content-Type': 'application/json'}
                     )
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        video_details = data.get('videoDetails', {})
+                    if page_response.status_code == 200:
+                        content = page_response.text
                         
-                        duration_seconds = video_details.get('lengthSeconds')
-                        view_count = video_details.get('viewCount')
+                        # Try multiple patterns for duration extraction
+                        duration_patterns = [
+                            r'"lengthSeconds":"(\d+)"',
+                            r'"approxDurationMs":"(\d+)"',
+                            r'"duration":"(\d+)"',
+                            r'"length_seconds":(\d+)',
+                            r',"length":"(\d+)"'
+                        ]
                         
-                        result = {}
-                        if duration_seconds:
-                            result['duration'] = self.format_duration(int(duration_seconds))
-                        if view_count:
-                            result['view_count'] = self.format_views(int(view_count))
+                        duration_found = False
+                        for pattern in duration_patterns:
+                            duration_match = re.search(pattern, content)
+                            if duration_match:
+                                try:
+                                    duration_value = int(duration_match.group(1))
+                                    # Handle milliseconds vs seconds
+                                    if duration_value > 100000:  # Likely milliseconds
+                                        duration_value = duration_value // 1000
+                                    if duration_value > 0:
+                                        song_data['duration'] = self.format_duration(duration_value)
+                                        duration_found = True
+                                        print(f"[DEBUG] Found duration for {video_id}: {song_data['duration']} using pattern {pattern}")
+                                        break
+                                except ValueError:
+                                    continue
                         
-                        return result
+                        # Try multiple patterns for view count extraction
+                        view_patterns = [
+                            r'"viewCount":"(\d+)"',
+                            r'"view_count":"(\d+)"',
+                            r'"views":"(\d+)"',
+                            r'"viewCountText":{"simpleText":"([\d,]+) views"',
+                            r'"viewCountText":{"runs":\[{"text":"([\d,]+)"}'
+                        ]
+                        
+                        view_found = False
+                        for pattern in view_patterns:
+                            view_match = re.search(pattern, content)
+                            if view_match:
+                                try:
+                                    view_text = view_match.group(1).replace(',', '')
+                                    view_count = int(view_text)
+                                    if view_count > 0:
+                                        song_data['view_count'] = self.format_views(view_count)
+                                        view_found = True
+                                        print(f"[DEBUG] Found views for {video_id}: {song_data['view_count']} using pattern {pattern}")
+                                        break
+                                except ValueError:
+                                    continue
+                        
+                        print(f"[DEBUG] Page scraping for {video_id} - Duration: {duration_found}, Views: {view_found}")
+                        
                 except Exception as e:
-                    print(f"Innertube API failed for {video_id}: {e}")
-                return {}
-            
-            # Execute all methods in parallel for maximum speed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                future_oembed = executor.submit(get_oembed_data)
-                future_youtube = executor.submit(get_youtube_api_data)
-                future_innertube = executor.submit(get_innertube_data)
+                    print(f"[DEBUG] Page scraping failed for {video_id}: {e}")
                 
-                # Collect results with short timeout
-                try:
-                    oembed_data = future_oembed.result(timeout=2)
-                    song_data.update(oembed_data)
-                except:
-                    pass
-                
-                try:
-                    youtube_data = future_youtube.result(timeout=3)
-                    if youtube_data.get('duration'):
-                        song_data['duration'] = youtube_data['duration']
-                    if youtube_data.get('view_count'):
-                        song_data['view_count'] = youtube_data['view_count']
-                except:
-                    pass
-                
-                try:
-                    innertube_data = future_innertube.result(timeout=2)
-                    # Only use innertube data if we don't have it from youtube scraping
-                    if not song_data.get('duration') or song_data['duration'] == "Loading...":
-                        if innertube_data.get('duration'):
-                            song_data['duration'] = innertube_data['duration']
-                    if not song_data.get('view_count') or song_data['view_count'] == "Loading...":
-                        if innertube_data.get('view_count'):
-                            song_data['view_count'] = innertube_data['view_count']
-                except:
-                    pass
-            
-            # Check if we got everything we need
-            has_duration = song_data.get('duration') and song_data['duration'] != "Loading..."
-            has_views = song_data.get('view_count') and song_data['view_count'] != "Loading..."
-            has_title = song_data.get('title') and song_data['title'] != "Loading..."
-            has_uploader = song_data.get('uploader') and song_data['uploader'] != "Loading..."
-            
-            # If we got most of the data instantly, mark as not loading
-            if has_title and has_uploader and (has_duration or has_views):
-                song_data['is_loading'] = False
-            
-            # Cache the result if we have good data
-            if not song_data.get('is_loading', True):
-                self.song_data_cache[video_id] = song_data
-            
-            return song_data
-            
-        except Exception as e:
-            print(f"Error extracting instant song data from URL {url}: {e}")
-            return None
-    
-    def enhance_song_data_batch(self, song_data_list):
-        """Enhanced batch processing - only for songs that still need data"""
-        def enhance_single_song(song_data):
-            try:
-                video_id = song_data['videoId']
-                url = song_data['url']
-                
-                # Skip if already fully loaded
-                if not song_data.get('is_loading', False):
-                    # Check if we're missing critical data
-                    needs_enhancement = (
-                        song_data.get('duration') in ["Loading...", None, ""] or
-                        song_data.get('view_count') in ["Loading...", None, ""] or
-                        song_data.get('title') in ["Loading...", None, ""] or
-                        song_data.get('uploader') in ["Loading...", None, ""]
-                    )
-                    if not needs_enhancement:
-                        return song_data
-                
-                print(f"[DEBUG] Enhancing song {video_id} with yt-dlp (fallback)...")
-                
-                # Only use yt-dlp as fallback for missing data
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extract_flat': False,
-                    'skip_download': True,
-                    'ignoreerrors': True,
-                    'geo_bypass': True,
-                    'noplaylist': True,
-                    'socket_timeout': 8,
-                    'retries': 1,
-                    'no_check_certificate': True,
-                    'extractor_args': {
-                        'youtube': {
-                            'skip': ['dash', 'hls'],
+                # Method 3: Try YouTube's internal API as fallback
+                if song_data['duration'] == "Loading..." or song_data['view_count'] == "Loading...":
+                    try:
+                        api_url = f"https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+                        payload = {
+                            "context": {
+                                "client": {
+                                    "clientName": "WEB",
+                                    "clientVersion": "2.20231201.01.00"
+                                }
+                            },
+                            "videoId": video_id
                         }
-                    }
-                }
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
+                        
+                        api_response = self.session.post(
+                            api_url,
+                            json=payload,
+                            timeout=2,
+                            headers={'Content-Type': 'application/json'}
+                        )
+                        
+                        if api_response.status_code == 200:
+                            api_data = api_response.json()
+                            video_details = api_data.get('videoDetails', {})
+                            
+                            if song_data['duration'] == "Loading...":
+                                length_seconds = video_details.get('lengthSeconds')
+                                if length_seconds:
+                                    song_data['duration'] = self.format_duration(int(length_seconds))
+                                    print(f"[DEBUG] Got duration from API for {video_id}: {song_data['duration']}")
+                            
+                            if song_data['view_count'] == "Loading...":
+                                view_count = video_details.get('viewCount')
+                                if view_count:
+                                    song_data['view_count'] = self.format_views(int(view_count))
+                                    print(f"[DEBUG] Got views from API for {video_id}: {song_data['view_count']}")
                     
-                    if info:
-                        # Only update missing fields
-                        enhanced_data = song_data.copy()
-                        
-                        if enhanced_data.get('title') in ["Loading...", None, ""]:
-                            enhanced_data['title'] = info.get('title', 'Unknown Title')[:100]
-                        
-                        if enhanced_data.get('uploader') in ["Loading...", None, ""]:
-                            enhanced_data['uploader'] = info.get('uploader', 'Unknown')[:50]
-                        
-                        if enhanced_data.get('duration') in ["Loading...", None, ""]:
-                            duration_seconds = info.get('duration', 0)
-                            enhanced_data['duration'] = self.format_duration(duration_seconds)
-                        
-                        if enhanced_data.get('view_count') in ["Loading...", None, ""]:
-                            enhanced_data['view_count'] = self.format_views(info.get('view_count', 0))
-                        
-                        enhanced_data['is_loading'] = False
-                        
-                        # Cache the enhanced result
-                        self.song_data_cache[video_id] = enhanced_data
-                        return enhanced_data
+                    except Exception as e:
+                        print(f"[DEBUG] YouTube API failed for {video_id}: {e}")
                 
-                # If yt-dlp fails, mark as not loading and set defaults for missing fields
-                song_data['is_loading'] = False
-                if song_data.get('duration') in ["Loading...", None, ""]:
-                    song_data['duration'] = "0:00"
-                if song_data.get('view_count') in ["Loading...", None, ""]:
-                    song_data['view_count'] = "0 views"
-                if song_data.get('title') in ["Loading...", None, ""]:
-                    song_data['title'] = f"Video {video_id[:8]}"
-                if song_data.get('uploader') in ["Loading...", None, ""]:
-                    song_data['uploader'] = "Unknown"
+                # Check if we have enough data to mark as not loading
+                has_title = song_data['title'] != "Loading..."
+                has_uploader = song_data['uploader'] != "Loading..."
+                has_duration = song_data['duration'] != "Loading..."
+                has_views = song_data['view_count'] != "Loading..."
+                
+                # Mark as complete if we have title and at least one other piece of data
+                if has_title and (has_uploader or has_duration or has_views):
+                    song_data['is_loading'] = False
+                    self.song_data_cache[video_id] = song_data
+                    print(f"[DEBUG] Fast load complete for {video_id} - Title: {has_title}, Duration: {has_duration}, Views: {has_views}")
                 
                 return song_data
                 
             except Exception as e:
-                print(f"Error enhancing song data for {song_data.get('videoId', 'unknown')}: {e}")
-                song_data['is_loading'] = False
-                # Set defaults for any missing fields
-                if song_data.get('duration') in ["Loading...", None, ""]:
-                    song_data['duration'] = "0:00"
-                if song_data.get('view_count') in ["Loading...", None, ""]:
-                    song_data['view_count'] = "0 views"
+                print(f"[DEBUG] Error in fast fetch for {video_id}: {e}")
+                song_data['is_loading'] = True
                 return song_data
         
-        # Filter songs that actually need enhancement
+        # Process all URLs in parallel
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="fast_fetch") as executor:
+            # Submit all tasks
+            future_to_url = {executor.submit(fetch_single_fast, url): url for url in urls}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_url, timeout=20):
+                try:
+                    result = future.result(timeout=3)
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    print(f"[DEBUG] Future failed: {e}")
+        
+        return results
+    
+    def enhance_song_data_background(self, song_data_list):
+        """OPTIMIZED: Background enhancement with better yt-dlp extraction for missing data"""
+        def enhance_batch(batch):
+            for song_data in batch:
+                try:
+                    video_id = song_data['videoId']
+                    
+                    # Skip if already fully loaded
+                    needs_duration = song_data.get('duration') == "Loading..."
+                    needs_views = song_data.get('view_count') == "Loading..."
+                    needs_title = song_data.get('title') == "Loading..."
+                    needs_uploader = song_data.get('uploader') == "Loading..."
+                    
+                    if not (needs_duration or needs_views or needs_title or needs_uploader):
+                        continue
+                    
+                    print(f"[DEBUG] Background enhancing {video_id} with yt-dlp - needs duration: {needs_duration}, views: {needs_views}")
+                    
+                    # Use yt-dlp for comprehensive data extraction
+                    ydl_opts = {
+                        'quiet': True,
+                        'no_warnings': True,
+                        'extract_flat': False,
+                        'skip_download': True,
+                        'ignoreerrors': True,
+                        'noplaylist': True,
+                        'socket_timeout': 8,
+                        'retries': 1,
+                        'fragment_retries': 0,
+                        'no_check_certificate': True,
+                    }
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(song_data['url'], download=False)
+                        
+                        if info:
+                            # Update missing fields
+                            if needs_title:
+                                song_data['title'] = info.get('title', f'Video {video_id[:8]}')[:100]
+                            
+                            if needs_uploader:
+                                song_data['uploader'] = info.get('uploader', info.get('channel', 'Unknown'))[:50]
+                            
+                            if needs_duration:
+                                duration_seconds = info.get('duration')
+                                if duration_seconds:
+                                    song_data['duration'] = self.format_duration(duration_seconds)
+                                    print(f"[DEBUG] yt-dlp extracted duration for {video_id}: {song_data['duration']}")
+                                else:
+                                    song_data['duration'] = "Live/Unknown"
+                            
+                            if needs_views:
+                                view_count = info.get('view_count')
+                                if view_count:
+                                    song_data['view_count'] = self.format_views(view_count)
+                                    print(f"[DEBUG] yt-dlp extracted views for {video_id}: {song_data['view_count']}")
+                                else:
+                                    song_data['view_count'] = "Views hidden"
+                            
+                            song_data['is_loading'] = False
+                            self.song_data_cache[video_id] = song_data
+                            
+                            # Update UI immediately
+                            self.after(0, lambda data=song_data: self.update_song_card(data))
+                            
+                        else:
+                            # yt-dlp failed, set reasonable defaults
+                            if needs_duration:
+                                song_data['duration'] = "Unknown"
+                            if needs_views:
+                                song_data['view_count'] = "Views unavailable"
+                            if needs_title:
+                                song_data['title'] = f"Video {video_id[:8]}"
+                            if needs_uploader:
+                                song_data['uploader'] = "Unknown"
+                            
+                            song_data['is_loading'] = False
+                            self.after(0, lambda data=song_data: self.update_song_card(data))
+                
+                except Exception as e:
+                    print(f"[DEBUG] Background enhance failed for {song_data.get('videoId', 'unknown')}: {e}")
+                    # Set fallback values
+                    if song_data.get('duration') == "Loading...":
+                        song_data['duration'] = "Unknown"
+                    if song_data.get('view_count') == "Loading...":
+                        song_data['view_count'] = "Views unavailable"
+                    if song_data.get('title') == "Loading...":
+                        song_data['title'] = f"Video {song_data.get('videoId', 'Unknown')[:8]}"
+                    if song_data.get('uploader') == "Loading...":
+                        song_data['uploader'] = "Unknown"
+                    
+                    song_data['is_loading'] = False
+                    self.after(0, lambda data=song_data: self.update_song_card(data))
+        
+        # Filter songs that need enhancement
         songs_needing_enhancement = [
             song for song in song_data_list 
-            if song.get('is_loading', False) or 
-            song.get('duration') in ["Loading...", None, ""] or
-            song.get('view_count') in ["Loading...", None, ""]
+            if (song.get('duration') == "Loading..." or
+                song.get('view_count') == "Loading..." or
+                song.get('title') == "Loading..." or
+                song.get('uploader') == "Loading...")
         ]
         
         if not songs_needing_enhancement:
-            return song_data_list
+            print("[DEBUG] No songs need background enhancement")
+            return
         
-        # Process only songs that need enhancement
-        enhanced_songs = song_data_list.copy()  # Start with original list
+        print(f"[DEBUG] Starting background enhancement for {len(songs_needing_enhancement)} songs")
         
-        # Process in smaller batches for better reliability
-        batch_size = 2
+        # Process in small batches to avoid overwhelming yt-dlp
+        batch_size = 3
         
-        for i in range(0, len(songs_needing_enhancement), batch_size):
-            batch = songs_needing_enhancement[i:i + batch_size]
-            futures = []
-            
-            for song_data in batch:
-                future = self.executor.submit(enhance_single_song, song_data)
-                futures.append((future, song_data))
-            
-            # Wait for batch completion and update UI
-            for future, original_song_data in futures:
-                try:
-                    enhanced_song_data = future.result(timeout=10)
-                    
-                    # Update the enhanced_songs list
-                    for j, song in enumerate(enhanced_songs):
-                        if song.get('videoId') == enhanced_song_data.get('videoId'):
-                            enhanced_songs[j] = enhanced_song_data
-                            break
-                    
-                    # Update UI immediately
-                    self.after(0, lambda data=enhanced_song_data: self.update_song_card(data))
-                    
-                except Exception as e:
-                    print(f"Error processing song: {e}")
-                    # Update with defaults
-                    original_song_data['is_loading'] = False
-                    if original_song_data.get('duration') in ["Loading...", None, ""]:
-                        original_song_data['duration'] = "0:00"
-                    if original_song_data.get('view_count') in ["Loading...", None, ""]:
-                        original_song_data['view_count'] = "0 views"
-                    
-                    self.after(0, lambda data=original_song_data: self.update_song_card(data))
+        def process_batches():
+            for i in range(0, len(songs_needing_enhancement), batch_size):
+                batch = songs_needing_enhancement[i:i + batch_size]
+                enhance_batch(batch)
+                # Small delay between batches to be nice to YouTube
+                time.sleep(1.0)
         
-        return enhanced_songs
+        # Run in background thread
+        threading.Thread(target=process_batches, daemon=True).start()
     
+    def load_liked_songs(self):
+        """OPTIMIZED: Load liked songs with ultra-fast display"""
+        print(f"[DEBUG] load_liked_songs called")
+        
+        if not self.current_user:
+            print("[DEBUG] User not logged in")
+            self.show_empty_state("Please log in to view your liked songs")
+            return
+        
+        print("[DEBUG] Showing loading state...")
+        self.show_loading_state()
+        
+        def load_songs_ultra_fast():
+            print("[DEBUG] load_songs_ultra_fast started")
+            start_time = time.time()
+            
+            try:
+                if self.firebase_manager is None:
+                    try:
+                        self.firebase_manager = FirebaseManager()
+                    except Exception as e:
+                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
+                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
+                        return
+                
+                # Get liked URLs from Firebase
+                liked_urls = self.firebase_manager.get_user_liked_songs(self.current_user)
+                print(f"[DEBUG] Got {len(liked_urls) if liked_urls else 0} liked URLs")
+                
+                if not liked_urls:
+                    self.after(0, lambda: self.show_empty_state("No liked songs yet"))
+                    return
+                
+                # OPTIMIZED: Get data for all songs in parallel with higher worker count
+                print(f"[DEBUG] Starting parallel fetch for {len(liked_urls)} songs...")
+                fetch_start = time.time()
+                
+                instant_song_data = self.fetch_song_data_batch_parallel(liked_urls, max_workers=24)
+                
+                fetch_time = time.time() - fetch_start
+                print(f"[DEBUG] Parallel fetch completed in {fetch_time:.2f}s, got {len(instant_song_data)} songs")
+                
+                # Display immediately
+                display_start = time.time()
+                self.after(0, lambda: self.display_songs(instant_song_data))
+                display_time = time.time() - display_start
+                
+                total_time = time.time() - start_time
+                print(f"[DEBUG] Total load time: {total_time:.2f}s (fetch: {fetch_time:.2f}s, display: {display_time:.2f}s)")
+                
+                # Start background enhancement for incomplete songs
+                if instant_song_data:
+                    self.enhance_song_data_background(instant_song_data)
+                
+            except Exception as e:
+                print(f"[DEBUG] Error in load_songs_ultra_fast: {e}")
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self.show_error_state("Failed to load liked songs"))
+        
+        # Start loading in background thread
+        threading.Thread(target=load_songs_ultra_fast, daemon=True).start()
+
+    def load_custom_playlist_songs(self):
+        """OPTIMIZED: Load custom playlist songs with ultra-fast display"""
+        print(f"[DEBUG] load_custom_playlist_songs called for playlist: {self.playlist_name}")
+        
+        if not self.current_user:
+            print("[DEBUG] User not logged in")
+            self.show_empty_state("Please log in to view your playlists")
+            return
+        
+        print("[DEBUG] Showing loading state...")
+        self.show_loading_state()
+        
+        def load_custom_songs_ultra_fast():
+            print("[DEBUG] load_custom_songs_ultra_fast started")
+            start_time = time.time()
+            
+            try:
+                if self.firebase_manager is None:
+                    try:
+                        self.firebase_manager = FirebaseManager()
+                    except Exception as e:
+                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
+                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
+                        return
+                
+                # Get playlist songs from Firebase
+                playlist_songs = self.firebase_manager.get_playlist_songs(self.current_user, self.playlist_name)
+                print(f"[DEBUG] Got {len(playlist_songs) if playlist_songs else 0} songs from Firebase")
+                
+                if not playlist_songs:
+                    self.after(0, lambda: self.show_empty_state(f"Playlist '{self.playlist_name}' is empty"))
+                    return
+                
+                # Extract URLs for parallel fetching
+                urls = [song_obj['url'] for song_obj in playlist_songs if 'url' in song_obj]
+                
+                if not urls:
+                    self.after(0, lambda: self.show_empty_state(f"No valid songs in playlist '{self.playlist_name}'"))
+                    return
+                
+                # OPTIMIZED: Fetch all song data in parallel
+                print(f"[DEBUG] Starting parallel fetch for {len(urls)} playlist songs...")
+                fetch_start = time.time()
+                
+                instant_song_data = self.fetch_song_data_batch_parallel(urls, max_workers=24)
+                
+                fetch_time = time.time() - fetch_start
+                print(f"[DEBUG] Parallel fetch completed in {fetch_time:.2f}s")
+                
+                # Merge any additional data from Firebase
+                firebase_data_map = {song_obj['url']: song_obj for song_obj in playlist_songs}
+                
+                for song_data in instant_song_data:
+                    firebase_song = firebase_data_map.get(song_data['url'], {})
+                    
+                    # Only override if Firebase has better data
+                    if 'title' in firebase_song and firebase_song['title']:
+                        song_data['title'] = firebase_song['title']
+                    if 'uploader' in firebase_song and firebase_song['uploader']:
+                        song_data['uploader'] = firebase_song['uploader']
+                    if 'duration' in firebase_song and firebase_song['duration']:
+                        song_data['duration'] = firebase_song['duration']
+                    if 'added_at' in firebase_song:
+                        song_data['added_at'] = firebase_song['added_at']
+                
+                total_time = time.time() - start_time
+                print(f"[DEBUG] Custom playlist load time: {total_time:.2f}s")
+                
+                # Display immediately
+                self.after(0, lambda: self.display_songs(instant_song_data))
+                
+                # Start background enhancement
+                if instant_song_data:
+                    self.enhance_song_data_background(instant_song_data)
+                
+            except Exception as e:
+                print(f"[DEBUG] Error in load_custom_songs_ultra_fast: {e}")
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self.show_error_state("Failed to load playlist songs"))
+        
+        # Start loading in background thread
+        threading.Thread(target=load_custom_songs_ultra_fast, daemon=True).start()
+
     def update_song_card(self, song_data):
         """Update a specific song card with enhanced data"""
         video_id = song_data.get('videoId')
@@ -558,211 +728,52 @@ class PlaylistScreen(ctk.CTkFrame):
                 break
     
     def build_details_text(self, song_data):
-        """Build the details text for a song card"""
+        """Build the details text for a song card - FIXED to always show available data"""
         details = []
         
         # Add uploader if available
         uploader = song_data.get('uploader')
-        if uploader and uploader not in ["Loading...", "Unknown", ""]:
+        if uploader and uploader not in ["Loading...", "Unknown", "", None]:
             details.append(uploader)
         
         # Add duration if available - prioritize this
         duration = song_data.get('duration')
-        if duration and duration not in ["Loading...", "0:00", ""]:
-            details.append(duration)
-        elif not song_data.get('is_loading', False):
-            # If not loading and no duration, add placeholder
-            details.append("Duration N/A")
+        if duration and duration not in ["Loading...", "", None]:
+            if duration == "0:00":
+                details.append("Live stream")
+            else:
+                details.append(duration)
+        elif song_data.get('is_loading', False):
+            details.append("Loading duration...")
+        else:
+            # Only show "Duration N/A" if we're not loading and truly don't have duration
+            if duration == "Loading..." or duration in ["Unknown", "Live/Unknown"]:
+                details.append("Duration unknown")
         
-        # Add view count if available
+        # Add view count if available - ALWAYS INCLUDE IF WE HAVE IT
         view_count = song_data.get('view_count')
-        if view_count and view_count not in ["Loading...", "0 views", ""]:
-            details.append(view_count)
+        if view_count and view_count not in ["Loading...", "", None]:
+            if view_count == "0 views":
+                details.append("No views")
+            elif view_count in ["Views hidden", "Views unavailable"]:
+                details.append("Views hidden")
+            else:
+                details.append(view_count)
+        elif song_data.get('is_loading', False):
+            details.append("Loading views...")
+        else:
+            # Show views status even if unavailable
+            if view_count == "Loading..." or view_count in ["Views hidden", "Views unavailable"]:
+                details.append("Views unavailable")
         
         if details:
-            return " • ".join(details)
+            result = " • ".join(details)
+            print(f"[DEBUG] Built details text: '{result}' for video {song_data.get('videoId', 'unknown')}")
+            return result
         elif song_data.get('is_loading', False):
             return "Loading details..."
         else:
             return "Details unavailable"
-    
-    def load_liked_songs(self):
-        """Load liked songs with instant display and background enhancement"""
-        print(f"[DEBUG] load_liked_songs called")
-        
-        if not self.current_user:
-            print("[DEBUG] User not logged in or no firebase manager")
-            self.show_empty_state("Please log in to view your liked songs")
-            return
-        
-        print("[DEBUG] Showing loading state...")
-        self.show_loading_state()
-        
-        def load_songs_instantly():
-            print("[DEBUG] load_songs_instantly started")
-            try:
-                if self.firebase_manager is None:
-                    try:
-                        self.firebase_manager = FirebaseManager()
-                    except Exception as e:
-                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
-                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
-                        return
-                # Get liked URLs from Firebase
-                liked_urls = self.firebase_manager.get_user_liked_songs(self.current_user)
-                print(f"[DEBUG] Got {len(liked_urls) if liked_urls else 0} liked URLs")
-                
-                if not liked_urls:
-                    self.after(0, lambda: self.show_empty_state("No liked songs yet"))
-                    return
-                
-                # Get instant basic data for all songs in parallel
-                instant_song_data = []
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    future_to_url = {executor.submit(self.get_instant_song_data, url): url for url in liked_urls}
-                    for future in as_completed(future_to_url):
-                        song_data = future.result()
-                        if song_data:
-                            instant_song_data.append(song_data)
-                
-                print(f"[DEBUG] Got instant data for {len(instant_song_data)} songs")
-                
-                # Display instantly
-                self.after(0, lambda: self.display_songs(instant_song_data))
-                
-                # Start background enhancement
-                if instant_song_data:
-                    threading.Thread(
-                        target=lambda: self.enhance_song_data_batch(instant_song_data),
-                        daemon=True
-                    ).start()
-                
-            except Exception as e:
-                print(f"[DEBUG] Error in load_songs_instantly: {e}")
-                import traceback
-                traceback.print_exc()
-                self.after(0, lambda: self.show_error_state("Failed to load liked songs"))
-        
-        # Start loading in background thread
-        threading.Thread(target=load_songs_instantly, daemon=True).start()
-
-    def load_custom_playlist_songs(self):
-        """Load songs from a custom playlist using Firebase"""
-        print(f"[DEBUG] load_custom_playlist_songs called for playlist: {self.playlist_name}")
-        
-        if not self.current_user:
-            print("[DEBUG] User not logged in or no firebase manager")
-            self.show_empty_state("Please log in to view your playlists")
-            return
-        
-        print("[DEBUG] Showing loading state...")
-        self.show_loading_state()
-        
-        def load_songs_instantly():
-            print("[DEBUG] load_custom_songs_instantly started")
-            try:
-                if self.firebase_manager is None:
-                    try:
-                        self.firebase_manager = FirebaseManager()
-                    except Exception as e:
-                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
-                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
-                        return
-                # Get playlist songs from Firebase
-                playlist_songs = self.firebase_manager.get_playlist_songs(self.current_user, self.playlist_name)
-                print(f"[DEBUG] Got {len(playlist_songs) if playlist_songs else 0} songs from Firebase")
-                
-                if not playlist_songs:
-                    self.after(0, lambda: self.show_empty_state(f"Playlist '{self.playlist_name}' is empty"))
-                    return
-                
-                # Process songs from Firebase
-                instant_song_data = []
-                for song_obj in playlist_songs:
-                    # Each song_obj should have a 'url' field from Firebase
-                    if 'url' in song_obj:
-                        # Get instant data from URL
-                        processed_data = self.get_instant_song_data(song_obj['url'])
-                        if processed_data:
-                            # Merge any additional data from Firebase
-                            if 'title' in song_obj:
-                                processed_data['title'] = song_obj['title']
-                            if 'uploader' in song_obj:
-                                processed_data['uploader'] = song_obj['uploader']
-                            if 'duration' in song_obj:
-                                processed_data['duration'] = song_obj['duration']
-                            if 'thumbnail_url' in song_obj:
-                                processed_data['thumbnail_url'] = song_obj['thumbnail_url']
-                            if 'added_at' in song_obj:
-                                processed_data['added_at'] = song_obj['added_at']
-                            
-                            instant_song_data.append(processed_data)
-                
-                print(f"[DEBUG] Got instant data for {len(instant_song_data)} songs")
-                
-                # Display instantly
-                self.after(0, lambda: self.display_songs(instant_song_data))
-                
-                # Start background enhancement
-                if instant_song_data:
-                    threading.Thread(
-                        target=lambda: self.enhance_song_data_batch(instant_song_data),
-                        daemon=True
-                    ).start()
-                
-            except Exception as e:
-                print(f"[DEBUG] Error in load_custom_songs_instantly: {e}")
-                import traceback
-                traceback.print_exc()
-                self.after(0, lambda: self.show_error_state("Failed to load playlist songs"))
-        
-        # Start loading in background thread
-        threading.Thread(target=load_songs_instantly, daemon=True).start()
-
-    def load_playlist_songs(self, playlist_data):
-        """Load songs from a specific playlist with instant display - LEGACY METHOD"""
-        # This method is kept for backward compatibility but should not be used for custom playlists
-        # Custom playlists should use load_custom_playlist_songs() instead
-        print("[DEBUG] load_playlist_songs called - LEGACY METHOD")
-        
-        if not playlist_data or not playlist_data.get('songs'):
-            self.show_empty_state("This playlist is empty")
-            return
-        
-        self.show_loading_state()
-        
-        def load_songs_instantly():
-            try:
-                instant_song_data = []
-                
-                for song_data in playlist_data['songs']:
-                    # If song_data already has complete info, use it
-                    if ('videoId' in song_data and 'title' in song_data and 
-                        not song_data.get('is_loading', False)):
-                        instant_song_data.append(song_data)
-                    elif 'url' in song_data:
-                        # Get instant data from URL
-                        processed_data = self.get_instant_song_data(song_data['url'])
-                        if processed_data:
-                            instant_song_data.append(processed_data)
-                
-                # Display instantly
-                self.after(0, lambda: self.display_songs(instant_song_data))
-                
-                # Enhance songs that need it
-                songs_to_enhance = [s for s in instant_song_data if s.get('is_loading', False)]
-                if songs_to_enhance:
-                    threading.Thread(
-                        target=lambda: self.enhance_song_data_batch(songs_to_enhance),
-                        daemon=True
-                    ).start()
-                
-            except Exception as e:
-                print(f"Error loading playlist songs: {e}")
-                self.after(0, lambda: self.show_error_state("Failed to load playlist songs"))
-        
-        threading.Thread(target=load_songs_instantly, daemon=True).start()
     
     def format_duration(self, seconds):
         """Format duration in seconds to MM:SS or HH:MM:SS"""
@@ -863,11 +874,6 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         empty_text.pack(pady=10)
         
-        # Disable scrolling for empty state
-        #self.canvas.configure(scrollregion=(0, 0, 0, 0))
-        #self.scrollbar.grid_remove()
-        #self.canvas.unbind_all("<MouseWheel>")
-        
         print("[DEBUG] show_empty_state completed")
         # Ensure scroll is disabled if content doesn't exceed canvas
         self.after_idle(self._update_scroll_region)
@@ -900,11 +906,6 @@ class PlaylistScreen(ctk.CTkFrame):
             text_color="#FF6B6B"
         )
         error_text.pack(pady=10)
-        
-        # Disable scrolling for error state
-        #self.canvas.configure(scrollregion=(0, 0, 0, 0))
-        #self.scrollbar.grid_remove()
-        #self.canvas.unbind_all("<MouseWheel>")
         
         print("[DEBUG] show_error_state completed")
         # Ensure scroll is disabled if error view doesn't exceed canvas
@@ -945,7 +946,7 @@ class PlaylistScreen(ctk.CTkFrame):
         print("[DEBUG] display_songs completed")
 
     def _add_song_card(self, song_data, idx):
-        """Create a single song card with mouse wheel event binding"""
+        """Create a single song card with optimized image loading"""
         # Create main card frame with dynamic width
         card = ctk.CTkFrame(
             self.scrollable_frame,
@@ -959,10 +960,8 @@ class PlaylistScreen(ctk.CTkFrame):
         card._details_label = None
         card._song_data = song_data
         
-        # FIX: Bind mouse wheel events to the card too
-        card.bind("<MouseWheel>", self._on_mousewheel)
-        card.bind("<Button-4>", self._on_mousewheel)
-        card.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel events to the card
+        self._bind_mousewheel_to_widget(card)
         
         # Configure grid for the card to take full width
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
@@ -975,46 +974,26 @@ class PlaylistScreen(ctk.CTkFrame):
         thumb_container.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
         thumb_container.grid_propagate(False)
         
-        # FIX: Bind mouse wheel to thumbnail container
-        thumb_container.bind("<MouseWheel>", self._on_mousewheel)
-        thumb_container.bind("<Button-4>", self._on_mousewheel)
-        thumb_container.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to thumbnail container
+        self._bind_mousewheel_to_widget(thumb_container)
         
         # Thumbnail label
         thumb = ctk.CTkLabel(thumb_container, text="")
         thumb.pack(expand=True, fill="both")
         
-        # FIX: Bind mouse wheel to thumbnail label
-        thumb.bind("<MouseWheel>", self._on_mousewheel)
-        thumb.bind("<Button-4>", self._on_mousewheel)
-        thumb.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to thumbnail label
+        self._bind_mousewheel_to_widget(thumb)
         
-        # Load thumbnail in background
-        def load_image_async():
-            try:
-                response = requests.get(song_data['thumbnail_url'], timeout=5)
-                img = Image.open(BytesIO(response.content))
-                img.thumbnail((120, 80), Image.Resampling.LANCZOS)
-                tk_image = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                def update_image():
-                    if thumb.winfo_exists():
-                        thumb.configure(image=tk_image)
-                        thumb.image = tk_image
-                self.after(0, update_image)
-            except Exception as e:
-                print(f"Error loading image: {e}")
-        
-        threading.Thread(target=load_image_async, daemon=True).start()
+        # OPTIMIZED: Load thumbnail with connection reuse and caching
+        self._load_thumbnail_optimized(thumb, song_data['thumbnail_url'])
         
         # Content frame that expands with window
         content_frame = ctk.CTkFrame(card, fg_color="transparent")
         content_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(0, 20), pady=10)
         content_frame.columnconfigure(0, weight=1)
         
-        # FIX: Bind mouse wheel to content frame
-        content_frame.bind("<MouseWheel>", self._on_mousewheel)
-        content_frame.bind("<Button-4>", self._on_mousewheel)
-        content_frame.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to content frame
+        self._bind_mousewheel_to_widget(content_frame)
         
         # Title with dynamic wrapping
         title_text = song_data['title']
@@ -1031,10 +1010,8 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="nsw", pady=(0, 5))
         
-        # FIX: Bind mouse wheel to title label
-        title.bind("<MouseWheel>", self._on_mousewheel)
-        title.bind("<Button-4>", self._on_mousewheel)
-        title.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to title label
+        self._bind_mousewheel_to_widget(title)
         
         card._title = title
         
@@ -1051,10 +1028,8 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         details_label.grid(row=1, column=0, sticky="nsw")
         
-        # FIX: Bind mouse wheel to details label
-        details_label.bind("<MouseWheel>", self._on_mousewheel)
-        details_label.bind("<Button-4>", self._on_mousewheel)
-        details_label.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to details label
+        self._bind_mousewheel_to_widget(details_label)
         
         card._details_label = details_label
         
@@ -1113,10 +1088,8 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         separator.grid(row=idx*2 + 1, column=0, sticky="ew", padx=20, pady=2)
         
-        # FIX: Bind mouse wheel to separator too
-        separator.bind("<MouseWheel>", self._on_mousewheel)
-        separator.bind("<Button-4>", self._on_mousewheel)
-        separator.bind("<Button-5>", self._on_mousewheel)
+        # Bind mouse wheel to separator too
+        self._bind_mousewheel_to_widget(separator)
         
         self.cards.append(card)
         
@@ -1126,6 +1099,44 @@ class PlaylistScreen(ctk.CTkFrame):
             title.configure(wraplength=available_width)
             
         card.bind('<Configure>', update_wraplength)
+
+    def _bind_mousewheel_to_widget(self, widget):
+        """Helper to bind mouse wheel events to a widget"""
+        widget.bind("<MouseWheel>", self._on_mousewheel)
+        widget.bind("<Button-4>", self._on_mousewheel)
+        widget.bind("<Button-5>", self._on_mousewheel)
+
+    def _load_thumbnail_optimized(self, thumb_label, thumbnail_url):
+        """OPTIMIZED: Load thumbnail with session reuse and better error handling"""
+        def load_image_async():
+            try:
+                # Use the shared session for connection reuse
+                response = self.session.get(thumbnail_url, timeout=3, stream=True)
+                response.raise_for_status()
+                
+                # Process image
+                img = Image.open(BytesIO(response.content))
+                img.thumbnail((120, 80), Image.Resampling.LANCZOS)
+                tk_image = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+                
+                def update_image():
+                    if thumb_label.winfo_exists():
+                        thumb_label.configure(image=tk_image)
+                        thumb_label.image = tk_image  # Keep reference
+                
+                self.after(0, update_image)
+                
+            except Exception as e:
+                print(f"[DEBUG] Error loading thumbnail {thumbnail_url}: {e}")
+                # Set a placeholder or default image
+                def set_placeholder():
+                    if thumb_label.winfo_exists():
+                        thumb_label.configure(text="🎵", font=ctk.CTkFont(size=30))
+                
+                self.after(0, set_placeholder)
+        
+        # Submit to thread pool
+        self.executor.submit(load_image_async)
     
     def _on_song_selected(self, song_data):
         """Called when a song is selected from the playlist"""
@@ -1146,26 +1157,37 @@ class PlaylistScreen(ctk.CTkFrame):
             # Call the callback with song data, playlist, and current index
             self.song_selection_callback(song_data, all_songs, current_index)
     
-    def _on_unlike_button_clicked(self, song_data, unlike_button):
-        """Handle unlike button click - this method should only be used for Saved Songs"""
+    def _on_remove_from_playlist_clicked(self, song_data, remove_button):
+        """Handle remove from playlist button click"""
         if not self.current_user or not self.firebase_manager:
             print("User not logged in")
             return
         
-        # This should only be called for Saved Songs
-        if self.playlist_name != "Saved Songs":
-            print("Unlike button should only be used for Saved Songs")
+        video_id = song_data.get('videoId')
+        if not video_id:
+            print("No video ID found")
             return
         
-        # Unlike the song
-        success, is_liked, message = self.firebase_manager.toggle_song_like(self.current_user, song_data)
-        
-        if success and not is_liked:  # Song was unliked
-            # Remove the card from the UI
-            self._remove_song_card(song_data)
-            print(message)
+        if self.playlist_name == "Saved Songs":
+            # Remove from liked songs (uses unlike_song method)
+            success = self.firebase_manager.unlike_song(self.current_user, video_id)
+            if success:
+                print(f"Removed '{song_data.get('title')}' from liked songs")
+                self._remove_song_card(song_data)
+            else:
+                print(f"Failed to remove '{song_data.get('title')}' from liked songs")
         else:
-            print(f"Error: {message}")
+            # Remove from custom playlist (uses remove_song_from_playlist method)
+            success, message = self.firebase_manager.remove_song_from_playlist(
+                self.current_user, 
+                self.playlist_name, 
+                video_id
+            )
+            if success:
+                print(message)
+                self._remove_song_card(song_data)
+            else:
+                print(f"Failed to remove song: {message}")
     
     def _remove_song_card(self, song_data):
         """Remove a song card from the UI"""
@@ -1203,38 +1225,6 @@ class PlaylistScreen(ctk.CTkFrame):
                     self.after_idle(self._update_scroll_region)
                 break
     
-    def _on_remove_from_playlist_clicked(self, song_data, remove_button):
-        """Handle remove from playlist button click"""
-        if not self.current_user or not self.firebase_manager:
-            print("User not logged in")
-            return
-        
-        video_id = song_data.get('videoId')
-        if not video_id:
-            print("No video ID found")
-            return
-        
-        if self.playlist_name == "Saved Songs":
-            # Remove from liked songs (uses unlike_song method)
-            success = self.firebase_manager.unlike_song(self.current_user, video_id)
-            if success:
-                print(f"Removed '{song_data.get('title')}' from liked songs")
-                self._remove_song_card(song_data)
-            else:
-                print(f"Failed to remove '{song_data.get('title')}' from liked songs")
-        else:
-            # Remove from custom playlist (uses remove_song_from_playlist method)
-            success, message = self.firebase_manager.remove_song_from_playlist(
-                self.current_user, 
-                self.playlist_name, 
-                video_id
-            )
-            if success:
-                print(message)
-                self._remove_song_card(song_data)
-            else:
-                print(f"Failed to remove song: {message}")
-    
     def _on_canvas_configure(self, event):
         """Update the canvas window width when the canvas is resized"""
         if self._resize_in_progress:
@@ -1265,8 +1255,6 @@ class PlaylistScreen(ctk.CTkFrame):
                 # Content fits – disable scrolling
                 self.canvas.configure(scrollregion=(0, 0, 0, 0))
                 self.scrollbar.grid_remove()
-                # FIX: Don't unbind mouse wheel events - keep them active
-                # The _on_mousewheel method will handle the case where scrolling is disabled
                 print("[DEBUG] Content fits, scrolling disabled but events remain bound")
             else:
                 # Content exceeds canvas – enable scrolling, add bottom padding
@@ -1278,36 +1266,6 @@ class PlaylistScreen(ctk.CTkFrame):
 
         except Exception as e:
             print(f"[DEBUG] Error updating scroll region: {e}")
-            
-    # def _update_scroll_region(self):
-    #     """Update scroll region only when content exceeds canvas height"""
-    #     try:
-    #         # Force update of scrollable frame
-    #         self.scrollable_frame.update_idletasks()
-            
-    #         # Get the actual content height
-    #         content_height = self.scrollable_frame.winfo_reqheight()
-    #         canvas_height = self.canvas.winfo_height()
-            
-    #         print(f"[DEBUG] Content height: {content_height}, Canvas height: {canvas_height}")
-            
-    #         if content_height <= canvas_height:
-    #             # Content fits within canvas - disable scrolling
-    #             print("[DEBUG] Content fits, disabling scroll")
-    #             self.canvas.configure(scrollregion=(0, 0, 0, 0))
-    #             self.scrollbar.grid_remove()
-    #             self.canvas.unbind_all("<MouseWheel>")
-    #         else:
-    #             # Content exceeds canvas - enable scrolling
-    #             print("[DEBUG] Content exceeds canvas, enabling scroll")
-    #             bbox = self.canvas.bbox("all")
-    #             if bbox:
-    #                 self.canvas.configure(scrollregion=bbox)
-    #                 self.scrollbar.grid()
-    #                 self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-                
-    #     except Exception as e:
-    #         print(f"[DEBUG] Error updating scroll region: {e}")
 
     def _on_window_configure(self, event):
         """Handle window resize with debounce"""
@@ -1376,14 +1334,30 @@ class PlaylistScreen(ctk.CTkFrame):
             print(f"[DEBUG] Error in mouse wheel handler: {e}")
             return "break"
     
-    def __del__(self):
-        """Cleanup when the object is destroyed"""
-        if hasattr(self, 'executor'):
-            self.executor.shutdown(wait=False)
-    
     def _on_destroy(self, event=None):
+        """Cleanup when the object is destroyed"""
         if hasattr(self, 'executor'):
             try:
                 self.executor.shutdown(wait=False)
+            except Exception:
+                pass
+        
+        if hasattr(self, 'session'):
+            try:
+                self.session.close()
+            except Exception:
+                pass
+    
+    def __del__(self):
+        """Cleanup when the object is destroyed"""
+        if hasattr(self, 'executor'):
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass
+        
+        if hasattr(self, 'session'):
+            try:
+                self.session.close()
             except Exception:
                 pass

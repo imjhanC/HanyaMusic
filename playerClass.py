@@ -22,6 +22,15 @@ class MusicPlayerContainer(ctk.CTkFrame):
         self.volume = 1.0
         self.shuffle_enabled = False
         self.repeat_enabled = False  # Repeat state
+        # Video modal state
+        self.video_visible = False
+        self.video_window = None
+        self.video_frame = None
+        self.video_vlc_instance = None
+        self.video_player = None
+        self._video_sync_job = None
+        self._root_configure_bind_id = None
+        self._audio_was_playing_before_video = False
         
         # VLC and audio setup
         self.vlc_instance = None
@@ -81,7 +90,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
                     self.player.stop()
                 
                 # Configure yt-dlp options for audio
-                ydl_opts = {
+                base_ydl_opts = {
                     'format': 'bestaudio[abr>0]/bestaudio/best',
                     'quiet': True,
                     'no_warnings': True,
@@ -95,12 +104,33 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 
                 youtube_url = f"https://www.youtube.com/watch?v={video_id}"
                 
-                # Extract audio stream URL
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(youtube_url, download=False)
-                    self.stream_url = info['url']
-                    self.total_duration = info.get('duration', 0)
-                    print(f"Loaded stream for: {info.get('title', 'Unknown Title')}")
+                # Extract audio stream URL with cookie fallbacks if YouTube challenges
+                def extract_with_cookies(url: str):
+                    # First try without cookies
+                    try:
+                        with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
+                            return ydl.extract_info(url, download=False)
+                    except Exception as e_first:
+                        lower_msg = str(e_first).lower()
+                        need_cookies = ('confirm you' in lower_msg and 'bot' in lower_msg) or ('sign in to confirm' in lower_msg) or ('429' in lower_msg)
+                        if not need_cookies:
+                            raise
+                        # Try common browsers for cookies
+                        for browser_name in ['edge', 'chrome', 'chromium', 'brave', 'firefox']:
+                            try:
+                                opts = dict(base_ydl_opts)
+                                opts['cookiesfrombrowser'] = (browser_name,)
+                                with yt_dlp.YoutubeDL(opts) as ydl:
+                                    return ydl.extract_info(url, download=False)
+                            except Exception:
+                                continue
+                        # If all cookie attempts fail, re-raise the original
+                        raise e_first
+
+                info = extract_with_cookies(youtube_url)
+                self.stream_url = info['url']
+                self.total_duration = info.get('duration', 0)
+                print(f"Loaded stream for: {info.get('title', 'Unknown Title')}")
                 
                 # Initialize VLC instance
                 self.vlc_instance = vlc.Instance('--intf', 'dummy')
@@ -112,6 +142,10 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 
                 # Set initial volume
                 self.player.audio_set_volume(int(self.volume * 100))
+                try:
+                    self.player.audio_set_mute(False)
+                except Exception:
+                    pass
                 
                 print("Audio stream loaded successfully")
                 
@@ -122,9 +156,24 @@ class MusicPlayerContainer(ctk.CTkFrame):
                         self.is_playing = True
                         self.play_btn.configure(text="⏸")
                         print("Auto-playing song")
+                        try:
+                            self.player.audio_set_mute(False)
+                        except Exception:
+                            pass
                 
                 # Schedule auto-play on main thread
                 self.after(0, start_playback)
+                # If video overlay is visible, reload and sync video too
+                def prepare_video_if_needed():
+                    if getattr(self, 'video_visible', False):
+                        try:
+                            # Reload video for the new track
+                            self._load_video_stream()
+                            # Enforce state after short delay for readiness
+                            self.after(150, lambda: self._enforce_video_state(sync_time=True))
+                        except Exception:
+                            pass
+                self.after(0, prepare_video_if_needed)
                 
             except Exception as e:
                 print(f"Error loading audio stream: {e}")
@@ -136,10 +185,25 @@ class MusicPlayerContainer(ctk.CTkFrame):
         # Main layout with 3 columns: thumbnail, controls, volume
         self.grid_columnconfigure(1, weight=1)
         
-        # Create a header frame for the close button
+        # Create a header frame for the close/video buttons
         self.header_frame = ctk.CTkFrame(self, fg_color="transparent", height=30)
         self.header_frame.grid(row=0, column=0, columnspan=3, sticky="nsew")
         self.header_frame.grid_propagate(False)
+        
+        # Video toggle button (aligned to left) ▲ to show, ▼ to hide
+        self.video_toggle_btn = ctk.CTkButton(
+            self.header_frame,
+            text="▲",
+            width=30,
+            height=30,
+            corner_radius=15,
+            fg_color="transparent",
+            hover_color="#333333",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16),
+            command=self._toggle_video_modal
+        )
+        self.video_toggle_btn.pack(side="left", padx=5, pady=5)
         
         # Add close button to header frame (aligned to right)
         self.close_btn = ctk.CTkButton(
@@ -373,11 +437,365 @@ class MusicPlayerContainer(ctk.CTkFrame):
             self.player.pause()
             self.play_btn.configure(text="▶")
             self.is_playing = False
+            # Pause video if visible
+            if self.video_player:
+                try:
+                    self.video_player.set_pause(True)
+                except Exception:
+                    pass
         else:
             # Play
             self.player.play()
             self.play_btn.configure(text="⏸")
             self.is_playing = True
+            # Play video if visible and sync
+            if self.video_player:
+                try:
+                    self.video_player.set_pause(False)
+                    self._sync_video_once()
+                except Exception:
+                    pass
+
+    def _toggle_video_modal(self):
+        """Show/hide a silent video modal over the results area, synced with audio."""
+        if self.video_visible:
+            self._hide_video_modal()
+        else:
+            self._show_video_modal()
+
+    def _show_video_modal(self):
+        try:
+            if self.video_window and self.video_window.winfo_exists():
+                return
+            root = self.winfo_toplevel()
+            # Create borderless topmost overlay
+            self.video_window = ctk.CTkToplevel(master=root)
+            self.video_window.overrideredirect(True)
+            self.video_window.configure(fg_color="#000000")
+            try:
+                self.video_window.attributes("-topmost", True)
+            except Exception:
+                pass
+            self.video_frame = ctk.CTkFrame(self.video_window, fg_color="#000000")
+            self.video_frame.pack(fill="both", expand=True)
+            self.video_visible = True
+            self.video_toggle_btn.configure(text="▼")
+            self._position_video_modal()
+            # Reposition on parent window moves/resizes
+            try:
+                if not self._root_configure_bind_id:
+                    self._root_configure_bind_id = root.bind("<Configure>", lambda _e: self._position_video_modal())
+            except Exception:
+                pass
+            # Prepare and play silent video; ensure audio player remains sound source
+            # Explicitly unmute audio player in case a previous state muted it
+            try:
+                if self.player:
+                    self.player.audio_set_mute(False)
+                    # If paused, keep paused state; if playing, ensure volume is set
+                    if self.is_playing:
+                        self.player.audio_set_volume(int(self.volume * 100))
+            except Exception:
+                pass
+            self._load_video_stream()
+            self._start_video_sync_timer()
+            # Remember play state to guide initial sync
+            self._audio_was_playing_before_video = bool(self.is_playing)
+        except Exception as e:
+            print(f"Error showing video modal: {e}")
+
+    def _hide_video_modal(self):
+        self.video_visible = False
+        self.video_toggle_btn.configure(text="▲")
+        # Stop sync timer
+        if self._video_sync_job:
+            try:
+                self.after_cancel(self._video_sync_job)
+            except Exception:
+                pass
+            self._video_sync_job = None
+        # Release video resources
+        try:
+            if self.video_player:
+                self.video_player.stop()
+                try:
+                    self.video_player.release()
+                except Exception:
+                    pass
+            self.video_player = None
+            if self.video_vlc_instance:
+                try:
+                    self.video_vlc_instance.release()
+                except Exception:
+                    pass
+            self.video_vlc_instance = None
+        except Exception:
+            pass
+        # Destroy overlay
+        try:
+            if self.video_window and self.video_window.winfo_exists():
+                self.video_window.destroy()
+            self.video_window = None
+        except Exception:
+            pass
+        # Unbind root handler
+        try:
+            if self._root_configure_bind_id:
+                self.winfo_toplevel().unbind("<Configure>", self._root_configure_bind_id)
+                self._root_configure_bind_id = None
+        except Exception:
+            pass
+
+    def _position_video_modal(self):
+        """Position the overlay to cover the area above the player inside the app window."""
+        if not (self.video_window and self.video_window.winfo_exists()):
+            return
+        root = self.winfo_toplevel()
+        try:
+            root.update_idletasks()
+            root_x = root.winfo_rootx()
+            root_y = root.winfo_rooty()
+            root_w = root.winfo_width()
+            player_top_y = self.winfo_rooty()
+            height = max(100, player_top_y - root_y)
+            self.video_window.geometry(f"{root_w}x{height}+{root_x}+{root_y}")
+        except Exception:
+            pass
+
+    def _get_video_url(self):
+        """Resolve the video URL for the current track.
+        Specifically targets 1920x1080 MP4 with AV1 codec.
+        """
+        try:
+            video_id = self.song_data.get('videoId')
+            if not video_id:
+                return None
+                
+            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Set up yt-dlp options
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': False,
+                'extract_flat': False,
+                'ignoreerrors': True,
+                'noplaylist': True,
+                'socket_timeout': 30,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                },
+                # Target specific format: 1920x1080 MP4 with AV1 codec
+                'format': 'bestvideo[width=1920][height=1080][vcodec^=av01][ext=mp4]+bestaudio[ext=m4a]/best[width=1920][height=1080][ext=mp4]/best',
+                'merge_output_format': 'mp4',
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    info = ydl.extract_info(youtube_url, download=False)
+                    if not info:
+                        raise Exception("No video info returned")
+                        
+                    if 'url' in info:
+                        print(f"Selected format: {info.get('format')}")
+                        return info['url']
+                    
+                    # If direct URL not found, try to find in formats
+                    formats = info.get('formats', [])
+                    for f in formats:
+                        if (f.get('width') == 1920 and 
+                            f.get('height') == 1080 and 
+                            f.get('vcodec', '').startswith('av01') and 
+                            f.get('ext') == 'mp4' and 
+                            f.get('url')):
+                            print(f"Found matching format: {f.get('format_id')}")
+                            return f['url']
+                    
+                    # Fallback to any 1080p format if exact match not found
+                    for f in formats:
+                        if (f.get('width') == 1920 and 
+                            f.get('height') == 1080 and 
+                            f.get('url')):
+                            print(f"Falling back to 1080p format: {f.get('format_id')}")
+                            return f['url']
+                    
+                    raise Exception("No suitable 1080p format found")
+                    
+                except Exception as e:
+                    print(f"Error in format selection: {e}")
+                    # Fallback to any available format if specific format not found
+                    try:
+                        ydl_opts['format'] = 'bestvideo[height<=?1080]+bestaudio/best'
+                        info = ydl.extract_info(youtube_url, download=False)
+                        if info and 'url' in info:
+                            print("Falling back to best available format")
+                            return info['url']
+                    except Exception as fallback_error:
+                        print(f"Fallback failed: {fallback_error}")
+                    
+                    return None
+                    
+        except Exception as e:
+            print(f"Error getting video URL: {e}")
+            return None
+
+    def _load_video_stream(self):
+        """Prepare the VLC video player with audio muted for the current song.
+        Runs heavy work in a background thread to avoid UI jank.
+        """
+        if not self.video_visible:
+            return
+        
+        def _prepare():
+            try:
+                video_url = self._get_video_url()
+                if not video_url:
+                    return
+                # Create/refresh VLC instance and player
+                if self.video_vlc_instance is None:
+                    # Separate instance for video; keep audio enabled globally and mute per-media/player
+                    self.video_vlc_instance = vlc.Instance('--intf', 'dummy')
+                vp = self.video_vlc_instance.media_player_new()
+                
+                # Keep video silent; audio comes from the audio player
+                vp.audio_set_mute(True)
+                vp.audio_set_volume(0)
+                
+                vmedia = self.video_vlc_instance.media_new(video_url)
+                # Add buffering/smoothness options to media
+                try:
+                    vmedia.add_option(":network-caching=1500")
+                    vmedia.add_option(":clock-jitter=0")
+                    vmedia.add_option(":drop-late-frames")
+                    vmedia.add_option(":skip-frames")
+                    # Ensure video media carries no audio to avoid any interference
+                    vmedia.add_option(":no-audio")
+                    # Prefer hardware decode on Windows 10+
+                    vmedia.add_option(":avcodec-hw=d3d11va")
+                except Exception:
+                    pass
+                vp.set_media(vmedia)
+
+                def _attach_and_start():
+                    if not (self.video_visible and self.video_window and self.video_window.winfo_exists()):
+                        return
+                    self.video_window.update_idletasks()
+                    try:
+                        vp.set_hwnd(self.video_frame.winfo_id())  # Windows
+                    except Exception:
+                        try:
+                            vp.set_xwindow(self.video_frame.winfo_id())  # X11
+                        except Exception:
+                            pass
+                    # Replace any previous player
+                    old = getattr(self, 'video_player', None)
+                    if old and old != vp:
+                        try:
+                            old.stop()
+                            old.release()
+                        except Exception:
+                            pass
+                    self.video_player = vp
+                    vp.play()
+                    # Ensure video stays silent after starting
+                    try:
+                        vp.audio_set_mute(True)
+                        vp.audio_set_volume(0)
+                    except Exception:
+                        pass
+                    # Re-ensure main audio is active and audible
+                    try:
+                        self._ensure_audio_active()
+                    except Exception:
+                        pass
+                    # Give VLC a moment before applying pause/sync and force time
+                    self.after(200, lambda: self._enforce_video_state(sync_time=True))
+
+                self.after(0, _attach_and_start)
+            except Exception as e:
+                print(f"Error loading video stream: {e}")
+
+        threading.Thread(target=_prepare, daemon=True).start()
+
+    def _enforce_video_state(self, sync_time=False):
+        """Ensure video play/pause matches audio state; optionally sync time."""
+        try:
+            if not self.video_player:
+                return
+            # Apply pause/play deterministically
+            self.video_player.set_pause(not self.is_playing)
+            if sync_time:
+                self._sync_video_once()
+            # Always ensure main audio stays unmuted when video overlay exists
+            try:
+                if self.video_visible and self.player:
+                    self.player.audio_set_mute(False)
+                    self.player.audio_set_volume(int(self.volume * 100))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _sync_video_once(self):
+        """One-time sync of video player's time/state to the audio player."""
+        try:
+            if not (self.player and self.video_player):
+                return
+            at_ms = int(self.player.get_time())
+            vt_ms = int(self.video_player.get_time())
+            drift = at_ms - vt_ms
+            
+            # Only sync if drift is significant (more than 1 second)
+            if abs(drift) > 1000:  # Increased from 600ms to 1000ms
+                self.video_player.set_time(max(0, at_ms))
+        except Exception as e:
+            print(f"Sync error: {e}")
+
+    def _start_video_sync_timer(self):
+        """Continuously align video with audio and keep overlay positioned."""
+        def _tick():
+            if not self.video_visible:
+                return
+                
+            self._position_video_modal()
+            
+            try:
+                if not (self.video_player and self.player):
+                    return
+                    
+                # Enforce play/pause state
+                self._enforce_video_state(sync_time=False)
+                
+                # Only sync time every 2 seconds to reduce jitter
+                current_time = time.time()
+                if not hasattr(self, '_last_sync_time'):
+                    self._last_sync_time = current_time
+                    
+                if current_time - self._last_sync_time >= 2.0:  # Sync every 2 seconds
+                    self._last_sync_time = current_time
+                    
+                    # Get current positions
+                    at_ms = int(self.player.get_time())
+                    vt_ms = int(self.video_player.get_time())
+                    drift = at_ms - vt_ms
+                    
+                    # Only adjust if drift is significant (more than 1.5 seconds)
+                    if abs(drift) > 1500:
+                        self.video_player.set_time(max(0, at_ms))
+                    
+                    # Remove rate adjustments to prevent stuttering
+                    try:
+                        self.video_player.set_rate(1.0)
+                    except Exception:
+                        pass
+                        
+            except Exception as e:
+                print(f"Sync tick error: {e}")
+                
+            # Schedule next tick (slightly reduced frequency)
+            if self.video_visible:
+                self._video_sync_job = self.after(400, _tick)  # Increased from 300ms to 400ms
+                
+        _tick()
     
     def _toggle_shuffle(self):
         """Toggle shuffle mode and create shuffled playlist"""
@@ -462,6 +880,9 @@ class MusicPlayerContainer(ctk.CTkFrame):
             
             self._update_song_info()
             self._load_audio_stream()
+            # If video overlay is visible, update video stream too
+            if self.video_visible:
+                self._load_video_stream()
             
             # Call callback if set
             if self.on_song_change:
@@ -488,6 +909,9 @@ class MusicPlayerContainer(ctk.CTkFrame):
             
             self._update_song_info()
             self._load_audio_stream()
+            # If video overlay is visible, update video stream too
+            if self.video_visible:
+                self._load_video_stream()
             
             # Call callback if set
             if self.on_song_change:
@@ -576,6 +1000,8 @@ class MusicPlayerContainer(ctk.CTkFrame):
             # If already playing, seek directly
             self.player.set_time(seek_time)
             self.current_time = seek_percentage * self.total_duration
+            # Sync video to the new time
+            self._enforce_video_state(sync_time=True)
 
     def _perform_seek_and_pause(self, seek_time, seek_percentage):
         """Helper method to seek when paused and then pause again"""
@@ -583,6 +1009,8 @@ class MusicPlayerContainer(ctk.CTkFrame):
             # Perform the seek
             self.player.set_time(seek_time)
             self.current_time = seek_percentage * self.total_duration
+            # Sync video time as well
+            self._enforce_video_state(sync_time=True)
             
             # Pause again after seeking
             self.player.pause()
@@ -608,6 +1036,12 @@ class MusicPlayerContainer(ctk.CTkFrame):
     
     def destroy(self):
         """Clean up VLC resources when destroying the player"""
+        # Ensure video modal and resources are cleaned up
+        try:
+            if getattr(self, 'video_visible', False):
+                self._hide_video_modal()
+        except Exception:
+            pass
         if self.player:
             self.player.stop()
         if self.vlc_instance:
