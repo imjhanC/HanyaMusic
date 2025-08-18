@@ -158,10 +158,33 @@ class PlaylistScreen(ctk.CTkFrame):
         # Configure canvas scrolling
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
+        # FIX: Bind mouse events to multiple widgets for better coverage
+        # Bind to the main container so scrolling works anywhere in the playlist
+        self.main_container.bind("<MouseWheel>", self._on_mousewheel)
+        self.main_container.bind("<Button-4>", self._on_mousewheel)  # Linux scroll up
+        self.main_container.bind("<Button-5>", self._on_mousewheel)  # Linux scroll down
+        
+        # Also bind to self (the PlaylistScreen frame)
+        self.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<Button-4>", self._on_mousewheel)
+        self.bind("<Button-5>", self._on_mousewheel)
+        
+        # Bind to canvas as well
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
+        
+        # Bind to scrollable frame
+        self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-4>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-5>", self._on_mousewheel)
+        
+        # Make sure canvas can receive focus
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
+        
         # Bind events
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.bind("<Configure>", self._on_window_configure)
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
         
         # Initialize cards list
         self.cards = []
@@ -808,6 +831,8 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         spinner.pack(expand=True)
         print("[DEBUG] show_loading_state completed")
+        # Recalculate scroll region to possibly disable scrolling when loading view is small
+        self.after_idle(self._update_scroll_region)
     
     def show_empty_state(self, message):
         """Show empty state when no songs are found"""
@@ -839,11 +864,13 @@ class PlaylistScreen(ctk.CTkFrame):
         empty_text.pack(pady=10)
         
         # Disable scrolling for empty state
-        self.canvas.configure(scrollregion=(0, 0, 0, 0))
-        self.scrollbar.grid_remove()
-        self.canvas.unbind_all("<MouseWheel>")
+        #self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        #self.scrollbar.grid_remove()
+        #self.canvas.unbind_all("<MouseWheel>")
         
         print("[DEBUG] show_empty_state completed")
+        # Ensure scroll is disabled if content doesn't exceed canvas
+        self.after_idle(self._update_scroll_region)
 
     def show_error_state(self, message):
         """Show error state when loading fails"""
@@ -875,11 +902,13 @@ class PlaylistScreen(ctk.CTkFrame):
         error_text.pack(pady=10)
         
         # Disable scrolling for error state
-        self.canvas.configure(scrollregion=(0, 0, 0, 0))
-        self.scrollbar.grid_remove()
-        self.canvas.unbind_all("<MouseWheel>")
+        #self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        #self.scrollbar.grid_remove()
+        #self.canvas.unbind_all("<MouseWheel>")
         
         print("[DEBUG] show_error_state completed")
+        # Ensure scroll is disabled if error view doesn't exceed canvas
+        self.after_idle(self._update_scroll_region)
     
     def display_songs(self, song_data_list):
         """Display the list of songs"""
@@ -916,7 +945,7 @@ class PlaylistScreen(ctk.CTkFrame):
         print("[DEBUG] display_songs completed")
 
     def _add_song_card(self, song_data, idx):
-        """Create a single song card"""
+        """Create a single song card with mouse wheel event binding"""
         # Create main card frame with dynamic width
         card = ctk.CTkFrame(
             self.scrollable_frame,
@@ -926,24 +955,39 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         
         # Store card reference and song data
-        card._title = None  # Will store the title widget reference
-        card._details_label = None  # Will store the details widget reference
-        card._song_data = song_data  # Store song data with the card
+        card._title = None
+        card._details_label = None
+        card._song_data = song_data
+        
+        # FIX: Bind mouse wheel events to the card too
+        card.bind("<MouseWheel>", self._on_mousewheel)
+        card.bind("<Button-4>", self._on_mousewheel)
+        card.bind("<Button-5>", self._on_mousewheel)
         
         # Configure grid for the card to take full width
         card.grid(row=idx*2, column=0, sticky="nsew", padx=15, pady=5)
-        card.grid_columnconfigure(1, weight=1)  # Make the content area expandable
-        card.grid_columnconfigure(2, weight=0, minsize=70)  # Make the button column just wide enough
-        card.grid_columnconfigure(3, weight=0, minsize=50)  # Make room for like button
+        card.grid_columnconfigure(1, weight=1)
+        card.grid_columnconfigure(2, weight=0, minsize=70)
+        card.grid_columnconfigure(3, weight=0, minsize=50)
         
         # Thumbnail container with fixed aspect ratio
         thumb_container = ctk.CTkFrame(card, fg_color="transparent", width=120, height=80)
         thumb_container.grid(row=0, column=0, rowspan=2, padx=10, pady=10, sticky="nsw")
-        thumb_container.grid_propagate(False)  # Prevent container from resizing
+        thumb_container.grid_propagate(False)
+        
+        # FIX: Bind mouse wheel to thumbnail container
+        thumb_container.bind("<MouseWheel>", self._on_mousewheel)
+        thumb_container.bind("<Button-4>", self._on_mousewheel)
+        thumb_container.bind("<Button-5>", self._on_mousewheel)
         
         # Thumbnail label
         thumb = ctk.CTkLabel(thumb_container, text="")
         thumb.pack(expand=True, fill="both")
+        
+        # FIX: Bind mouse wheel to thumbnail label
+        thumb.bind("<MouseWheel>", self._on_mousewheel)
+        thumb.bind("<Button-4>", self._on_mousewheel)
+        thumb.bind("<Button-5>", self._on_mousewheel)
         
         # Load thumbnail in background
         def load_image_async():
@@ -953,7 +997,7 @@ class PlaylistScreen(ctk.CTkFrame):
                 img.thumbnail((120, 80), Image.Resampling.LANCZOS)
                 tk_image = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                 def update_image():
-                    if thumb.winfo_exists():  # Check if widget still exists
+                    if thumb.winfo_exists():
                         thumb.configure(image=tk_image)
                         thumb.image = tk_image
                 self.after(0, update_image)
@@ -967,6 +1011,11 @@ class PlaylistScreen(ctk.CTkFrame):
         content_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(0, 20), pady=10)
         content_frame.columnconfigure(0, weight=1)
         
+        # FIX: Bind mouse wheel to content frame
+        content_frame.bind("<MouseWheel>", self._on_mousewheel)
+        content_frame.bind("<Button-4>", self._on_mousewheel)
+        content_frame.bind("<Button-5>", self._on_mousewheel)
+        
         # Title with dynamic wrapping
         title_text = song_data['title']
         if song_data.get('is_loading', False) and title_text == "Loading...":
@@ -978,11 +1027,15 @@ class PlaylistScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w",
             justify="left",
-            wraplength=0  # Will be updated on resize
+            wraplength=0
         )
         title.grid(row=0, column=0, sticky="nsw", pady=(0, 5))
         
-        # Store title reference on card for later updates
+        # FIX: Bind mouse wheel to title label
+        title.bind("<MouseWheel>", self._on_mousewheel)
+        title.bind("<Button-4>", self._on_mousewheel)
+        title.bind("<Button-5>", self._on_mousewheel)
+        
         card._title = title
         
         # Build details text using the improved method
@@ -998,12 +1051,15 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         details_label.grid(row=1, column=0, sticky="nsw")
         
-        # Store details label reference for updates
+        # FIX: Bind mouse wheel to details label
+        details_label.bind("<MouseWheel>", self._on_mousewheel)
+        details_label.bind("<Button-4>", self._on_mousewheel)
+        details_label.bind("<Button-5>", self._on_mousewheel)
+        
         card._details_label = details_label
         
         # Unlike/Remove button (different behavior for Saved Songs vs custom playlists)
         if self.playlist_name == "Saved Songs":
-            # For Saved Songs, show unlike button
             remove_button = ctk.CTkButton(
                 card,
                 text="♥",
@@ -1017,7 +1073,6 @@ class PlaylistScreen(ctk.CTkFrame):
                 command=lambda: self._on_remove_from_playlist_clicked(song_data, remove_button)
             )
         else:
-            # For custom playlists, show trash icon
             remove_button = ctk.CTkButton(
                 card,
                 text="🗑",
@@ -1031,7 +1086,6 @@ class PlaylistScreen(ctk.CTkFrame):
                 command=lambda: self._on_remove_from_playlist_clicked(song_data, remove_button)
             )
 
-                
         remove_button.grid(row=0, column=2, rowspan=2, padx=(0, 10), pady=15, sticky="nsew")
         
         # Play button (right-aligned)
@@ -1051,7 +1105,7 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         play_btn.grid(row=0, column=3, rowspan=2, padx=(0, 15), pady=15, sticky="nsew")
         
-        # Add a separator between items (we'll add it for all items except we'll handle the last one in display_songs)
+        # Add a separator between items
         separator = ctk.CTkFrame(
             self.scrollable_frame,
             height=1,
@@ -1059,15 +1113,18 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         separator.grid(row=idx*2 + 1, column=0, sticky="ew", padx=20, pady=2)
         
+        # FIX: Bind mouse wheel to separator too
+        separator.bind("<MouseWheel>", self._on_mousewheel)
+        separator.bind("<Button-4>", self._on_mousewheel)
+        separator.bind("<Button-5>", self._on_mousewheel)
+        
         self.cards.append(card)
         
         # Update wraplength on window resize
         def update_wraplength(event):
-            # Calculate available width for the title (total width - thumbnail - buttons - paddings)
-            available_width = max(100, card.winfo_width() - 270)  # 270 = thumbnail(120) + unlike button(40) + play button(60) + paddings(50)
+            available_width = max(100, card.winfo_width() - 270)
             title.configure(wraplength=available_width)
             
-        # Bind to card resize
         card.bind('<Configure>', update_wraplength)
     
     def _on_song_selected(self, song_data):
@@ -1190,22 +1247,35 @@ class PlaylistScreen(ctk.CTkFrame):
             self.after_idle(self._update_scroll_region)
     
     def _update_scroll_region(self):
-        """Update scroll region for scrolling"""
+        """Enable scrolling only when content truly exceeds the canvas height."""
         try:
-            # Force update of scrollable frame
+            # Force layout calculations
             self.scrollable_frame.update_idletasks()
-            
-            # Always update scroll region based on content
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            
-            # Always ensure scrollbar is visible and mousewheel is bound
-            self.scrollbar.grid(row=0, column=1, sticky="ns")
-            
-            # Bind mousewheel to canvas specifically (not bind_all)
-            self.canvas.bind("<MouseWheel>", self._on_mousewheel)
-            self.canvas.bind("<Button-4>", self._on_mousewheel)  # Linux scroll up
-            self.canvas.bind("<Button-5>", self._on_mousewheel)  # Linux scroll down
-                    
+
+            # Use canvas bbox for precise content height
+            bbox = self.canvas.bbox("all")
+            content_height_raw = (bbox[3] - bbox[1]) if bbox else 0
+            canvas_height = self.canvas.winfo_height()
+
+            # Allow a small margin so an item at the bottom can still scroll up
+            margin = 2
+            bottom_padding = 60  # extra space only when content overflows
+
+            if content_height_raw <= max(0, canvas_height - margin):
+                # Content fits – disable scrolling
+                self.canvas.configure(scrollregion=(0, 0, 0, 0))
+                self.scrollbar.grid_remove()
+                # FIX: Don't unbind mouse wheel events - keep them active
+                # The _on_mousewheel method will handle the case where scrolling is disabled
+                print("[DEBUG] Content fits, scrolling disabled but events remain bound")
+            else:
+                # Content exceeds canvas – enable scrolling, add bottom padding
+                if bbox:
+                    padded_bbox = (bbox[0], bbox[1], bbox[2], bbox[3] + bottom_padding)
+                    self.canvas.configure(scrollregion=padded_bbox)
+                self.scrollbar.grid(row=0, column=1, sticky="ns")
+                print("[DEBUG] Content exceeds canvas, scrolling enabled")
+
         except Exception as e:
             print(f"[DEBUG] Error updating scroll region: {e}")
             
@@ -1264,7 +1334,47 @@ class PlaylistScreen(ctk.CTkFrame):
             self._resize_after_id = None
     
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        """Handle mouse wheel scrolling with better logic"""
+        try:
+            # Check if scrolling is actually needed
+            scrollregion = self.canvas.cget("scrollregion")
+            if not scrollregion or scrollregion == "0 0 0 0":
+                # No scroll region set, don't scroll
+                return "break"
+            
+            # Parse scroll region
+            x1, y1, x2, y2 = map(float, scrollregion.split())
+            content_height = y2 - y1
+            canvas_height = self.canvas.winfo_height()
+            
+            # Only scroll if content is larger than canvas
+            if content_height <= canvas_height:
+                return "break"
+            
+            # Handle different platforms
+            if hasattr(event, 'delta') and event.delta:
+                # Windows and MacOS
+                delta = int(-1 * (event.delta / 120))
+            elif hasattr(event, 'num'):
+                # Linux
+                if event.num == 4:
+                    delta = -1  # scroll up
+                elif event.num == 5:
+                    delta = 1   # scroll down
+                else:
+                    return "break"
+            else:
+                return "break"
+            
+            # Perform the scroll
+            self.canvas.yview_scroll(delta, "units")
+            
+            # Prevent event from propagating further
+            return "break"
+            
+        except Exception as e:
+            print(f"[DEBUG] Error in mouse wheel handler: {e}")
+            return "break"
     
     def __del__(self):
         """Cleanup when the object is destroyed"""
