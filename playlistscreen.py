@@ -7,7 +7,6 @@ import yt_dlp
 import re
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from playerClass import MusicPlayerContainer
 from FirebaseClass import FirebaseManager
 
 class PlaylistScreen(ctk.CTkFrame):
@@ -18,7 +17,7 @@ class PlaylistScreen(ctk.CTkFrame):
         self.song_selection_callback = song_selection_callback
         self.playlist_name = playlist_name
         self.back_callback = back_callback
-        self.firebase_manager = FirebaseManager() if current_user else None
+        self.firebase_manager = None
         self.configure(fg_color="transparent")
         
         print(f"[DEBUG] current_user: {current_user}")
@@ -33,8 +32,9 @@ class PlaylistScreen(ctk.CTkFrame):
         self.loading_songs = False
         
         # Thread pool for parallel processing
-        self.executor = ThreadPoolExecutor(max_workers=5)
-        
+        self.executor = ThreadPoolExecutor(max_workers=8)
+        self.bind("<Destroy>",self._on_destroy) # clear cache on exiting this page 
+
         # Main container frame that fills the window
         self.main_container = ctk.CTkFrame(self, fg_color="transparent")
         self.main_container.pack(fill="both", expand=True, padx=0, pady=0)
@@ -297,7 +297,7 @@ class PlaylistScreen(ctk.CTkFrame):
                 return {}
             
             # Execute all methods in parallel for maximum speed
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 future_oembed = executor.submit(get_oembed_data)
                 future_youtube = executor.submit(get_youtube_api_data)
                 future_innertube = executor.submit(get_innertube_data)
@@ -567,7 +567,7 @@ class PlaylistScreen(ctk.CTkFrame):
         """Load liked songs with instant display and background enhancement"""
         print(f"[DEBUG] load_liked_songs called")
         
-        if not self.current_user or not self.firebase_manager:
+        if not self.current_user:
             print("[DEBUG] User not logged in or no firebase manager")
             self.show_empty_state("Please log in to view your liked songs")
             return
@@ -578,6 +578,13 @@ class PlaylistScreen(ctk.CTkFrame):
         def load_songs_instantly():
             print("[DEBUG] load_songs_instantly started")
             try:
+                if self.firebase_manager is None:
+                    try:
+                        self.firebase_manager = FirebaseManager()
+                    except Exception as e:
+                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
+                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
+                        return
                 # Get liked URLs from Firebase
                 liked_urls = self.firebase_manager.get_user_liked_songs(self.current_user)
                 print(f"[DEBUG] Got {len(liked_urls) if liked_urls else 0} liked URLs")
@@ -621,7 +628,7 @@ class PlaylistScreen(ctk.CTkFrame):
         """Load songs from a custom playlist using Firebase"""
         print(f"[DEBUG] load_custom_playlist_songs called for playlist: {self.playlist_name}")
         
-        if not self.current_user or not self.firebase_manager:
+        if not self.current_user:
             print("[DEBUG] User not logged in or no firebase manager")
             self.show_empty_state("Please log in to view your playlists")
             return
@@ -632,6 +639,13 @@ class PlaylistScreen(ctk.CTkFrame):
         def load_songs_instantly():
             print("[DEBUG] load_custom_songs_instantly started")
             try:
+                if self.firebase_manager is None:
+                    try:
+                        self.firebase_manager = FirebaseManager()
+                    except Exception as e:
+                        print(f"[DEBUG] Error initializing FirebaseManager: {e}")
+                        self.after(0, lambda: self.show_error_state("Failed to initialize Firebase"))
+                        return
                 # Get playlist songs from Firebase
                 playlist_songs = self.firebase_manager.get_playlist_songs(self.current_user, self.playlist_name)
                 print(f"[DEBUG] Got {len(playlist_songs) if playlist_songs else 0} songs from Firebase")
@@ -802,12 +816,6 @@ class PlaylistScreen(ctk.CTkFrame):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         
-        # Hide scrollbar when empty
-        self.scrollbar.grid_remove()
-        
-        # Unbind mouse wheel to prevent scrolling
-        self.canvas.unbind_all("<MouseWheel>")
-        
         # Create empty state container
         empty_container = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
         empty_container.pack(expand=True, fill="both", pady=50)
@@ -830,9 +838,10 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         empty_text.pack(pady=10)
         
-        # Update scroll region to prevent scrolling when empty
-        self.canvas.update_idletasks()
+        # Disable scrolling for empty state
         self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        self.scrollbar.grid_remove()
+        self.canvas.unbind_all("<MouseWheel>")
         
         print("[DEBUG] show_empty_state completed")
 
@@ -842,12 +851,6 @@ class PlaylistScreen(ctk.CTkFrame):
         # Clear existing content
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
-        
-        # Hide scrollbar when empty
-        self.scrollbar.grid_remove()
-        
-        # Unbind mouse wheel to prevent scrolling
-        self.canvas.unbind_all("<MouseWheel>")
         
         # Create error state container
         error_container = ctk.CTkFrame(self.scrollable_frame, fg_color="transparent")
@@ -871,9 +874,10 @@ class PlaylistScreen(ctk.CTkFrame):
         )
         error_text.pack(pady=10)
         
-        # Update scroll region to prevent scrolling when empty
-        self.canvas.update_idletasks()
+        # Disable scrolling for error state
         self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        self.scrollbar.grid_remove()
+        self.canvas.unbind_all("<MouseWheel>")
         
         print("[DEBUG] show_error_state completed")
     
@@ -884,23 +888,22 @@ class PlaylistScreen(ctk.CTkFrame):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
         
-        # Show scrollbar when there are songs
-        self.scrollbar.grid()
-        
-        # Rebind mouse wheel for scrolling when there are songs
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        
         # Reset cards list
         self.cards = []
         
         # Configure grid for scrollable frame
         self.scrollable_frame.columnconfigure(0, weight=1)
         
+        if not song_data_list:
+            # Handle empty state
+            self.show_empty_state("No songs found")
+            return
+        
         # Create song cards
         for idx, song_data in enumerate(song_data_list):
             self._add_song_card(song_data, idx)
         
-        # Remove the last separator if it exists (since we add separators for all items)
+        # Remove the last separator if it exists
         if len(song_data_list) > 0:
             last_separator_row = (len(song_data_list) - 1) * 2 + 1
             separators = self.scrollable_frame.grid_slaves(row=last_separator_row, column=0)
@@ -908,8 +911,8 @@ class PlaylistScreen(ctk.CTkFrame):
                 if isinstance(separator, ctk.CTkFrame) and separator.cget("height") == 1:
                     separator.destroy()
         
-        # Update scroll region
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Update scroll region after all cards are added
+        self.after_idle(self._update_scroll_region)
         print("[DEBUG] display_songs completed")
 
     def _add_song_card(self, song_data, idx):
@@ -1117,22 +1120,30 @@ class PlaylistScreen(ctk.CTkFrame):
                 self.cards.pop(i)
                 
                 # Remove separator if it exists
-                if i < len(self.cards):  # If not the last card
-                    separator = self.scrollable_frame.grid_slaves(row=i*2 + 1, column=0)
-                    if separator:
-                        separator[0].destroy()
+                separator = self.scrollable_frame.grid_slaves(row=i*2 + 1, column=0)
+                if separator:
+                    separator[0].destroy()
                 
                 # Update the remaining cards' grid positions
                 for j in range(i, len(self.cards)):
                     self.cards[j].grid(row=j*2, column=0, sticky="nsew", padx=15, pady=5)
-                    # Update separator position
+                    # Update separator position for remaining cards
                     if j < len(self.cards) - 1:
-                        separator = self.scrollable_frame.grid_slaves(row=j*2 + 1, column=0)
-                        if separator:
-                            separator[0].grid(row=j*2 + 1, column=0, sticky="ew", padx=20, pady=2)
+                        # Find the separator that should be at position j*2 + 1
+                        separators_to_move = self.scrollable_frame.grid_slaves(row=(j+1)*2 + 1, column=0)
+                        for sep in separators_to_move:
+                            if isinstance(sep, ctk.CTkFrame) and sep.cget("height") == 1:
+                                sep.grid(row=j*2 + 1, column=0, sticky="ew", padx=20, pady=2)
                 
-                # Update scroll region
-                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+                # Check if we should show empty state
+                if len(self.cards) == 0:
+                    if self.playlist_name == "Saved Songs":
+                        self.show_empty_state("No liked songs yet")
+                    else:
+                        self.show_empty_state(f"Playlist '{self.playlist_name}' is empty")
+                else:
+                    # Update scroll region after removal
+                    self.after_idle(self._update_scroll_region)
                 break
     
     def _on_remove_from_playlist_clicked(self, song_data, remove_button):
@@ -1174,7 +1185,60 @@ class PlaylistScreen(ctk.CTkFrame):
             
         if event.width > 1:  # Ensure we have a valid width
             self.canvas.itemconfig("scrollable_frame", width=event.width)
+            
+            # Update scroll region after configuring width
+            self.after_idle(self._update_scroll_region)
     
+    def _update_scroll_region(self):
+        """Update scroll region for scrolling"""
+        try:
+            # Force update of scrollable frame
+            self.scrollable_frame.update_idletasks()
+            
+            # Always update scroll region based on content
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            
+            # Always ensure scrollbar is visible and mousewheel is bound
+            self.scrollbar.grid(row=0, column=1, sticky="ns")
+            
+            # Bind mousewheel to canvas specifically (not bind_all)
+            self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+            self.canvas.bind("<Button-4>", self._on_mousewheel)  # Linux scroll up
+            self.canvas.bind("<Button-5>", self._on_mousewheel)  # Linux scroll down
+                    
+        except Exception as e:
+            print(f"[DEBUG] Error updating scroll region: {e}")
+            
+    # def _update_scroll_region(self):
+    #     """Update scroll region only when content exceeds canvas height"""
+    #     try:
+    #         # Force update of scrollable frame
+    #         self.scrollable_frame.update_idletasks()
+            
+    #         # Get the actual content height
+    #         content_height = self.scrollable_frame.winfo_reqheight()
+    #         canvas_height = self.canvas.winfo_height()
+            
+    #         print(f"[DEBUG] Content height: {content_height}, Canvas height: {canvas_height}")
+            
+    #         if content_height <= canvas_height:
+    #             # Content fits within canvas - disable scrolling
+    #             print("[DEBUG] Content fits, disabling scroll")
+    #             self.canvas.configure(scrollregion=(0, 0, 0, 0))
+    #             self.scrollbar.grid_remove()
+    #             self.canvas.unbind_all("<MouseWheel>")
+    #         else:
+    #             # Content exceeds canvas - enable scrolling
+    #             print("[DEBUG] Content exceeds canvas, enabling scroll")
+    #             bbox = self.canvas.bbox("all")
+    #             if bbox:
+    #                 self.canvas.configure(scrollregion=bbox)
+    #                 self.scrollbar.grid()
+    #                 self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+                
+    #     except Exception as e:
+    #         print(f"[DEBUG] Error updating scroll region: {e}")
+
     def _on_window_configure(self, event):
         """Handle window resize with debounce"""
         if self._resize_after_id:
@@ -1186,14 +1250,15 @@ class PlaylistScreen(ctk.CTkFrame):
         """Process resize after a short delay to prevent excessive updates"""
         self._resize_in_progress = True
         try:
-            # Update canvas scroll region
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            
-            # Update card layouts
+            # Update card layouts first
             for card in self.cards:
                 if hasattr(card, '_title') and card._title.winfo_exists():
                     available_width = max(100, card.winfo_width() - 220)
                     card._title.configure(wraplength=available_width)
+            
+            # Then update scroll region
+            self._update_scroll_region()
+            
         finally:
             self._resize_in_progress = False
             self._resize_after_id = None
@@ -1205,3 +1270,10 @@ class PlaylistScreen(ctk.CTkFrame):
         """Cleanup when the object is destroyed"""
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
+    
+    def _on_destroy(self, event=None):
+        if hasattr(self, 'executor'):
+            try:
+                self.executor.shutdown(wait=False)
+            except Exception:
+                pass

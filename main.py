@@ -1,3 +1,13 @@
+import sys, os, shutil, importlib
+sys.dont_write_bytecode = True
+importlib.invalidate_caches()
+try:
+	root = os.path.dirname(os.path.abspath(__file__))
+	for dp, dns, fns in os.walk(root):
+		if os.path.basename(dp) == '__pycache__':
+			shutil.rmtree(dp, ignore_errors=True)
+except Exception:
+	pass
 import customtkinter as ctk
 from PIL import Image, ImageTk
 import os
@@ -884,7 +894,21 @@ class App(ctk.CTk):
             text_color="#888888"
         )
         count_label.pack(pady=(0, 15))
-        
+        if playlist["is_default"] and self.logged_in:
+            def _update_count():
+                try:
+                    fm = FirebaseManager()
+                    cnt = fm.get_saved_songs_count(self.current_user)
+                except Exception as e:
+                    print(f"Saved songs count error: {e}")
+                    cnt = 0
+                self.after(0, lambda: count_label.configure(
+                    text=f"{cnt} song{'s' if cnt != 1 else ''}"
+                ))
+            threading.Thread(target=_update_count, daemon=True).start()
+        else:
+            count_label.configure(text=f"{len(playlist['songs'])} song{'s' if len(playlist['songs']) != 1 else ''}")
+
         # Action buttons
         button_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
         button_frame.pack(fill="x")
