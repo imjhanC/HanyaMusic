@@ -339,57 +339,56 @@ class PlaylistScreen(ctk.CTkFrame):
                 except Exception as e:
                     print(f"[DEBUG] Page scraping failed for {video_id}: {e}")
                 
-                # Method 3: Try YouTube's internal API as fallback
-                if song_data['duration'] == "Loading..." or song_data['view_count'] == "Loading...":
+                # Method 3: If still missing, use yt-dlp synchronously (no background)
+                needs_duration = song_data['duration'] == "Loading..."
+                needs_views = song_data['view_count'] == "Loading..."
+                needs_title = song_data['title'] == "Loading..."
+                needs_uploader = song_data['uploader'] == "Loading..."
+                if needs_duration or needs_views or needs_title or needs_uploader:
                     try:
-                        api_url = f"https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-                        payload = {
-                            "context": {
-                                "client": {
-                                    "clientName": "WEB",
-                                    "clientVersion": "2.20231201.01.00"
-                                }
-                            },
-                            "videoId": video_id
+                        ydl_opts = {
+                            'quiet': True,
+                            'no_warnings': True,
+                            'extract_flat': False,
+                            'skip_download': True,
+                            'ignoreerrors': True,
+                            'noplaylist': True,
+                            'socket_timeout': 8,
+                            'retries': 1,
+                            'fragment_retries': 0,
+                            'no_check_certificate': True,
                         }
-                        
-                        api_response = self.session.post(
-                            api_url,
-                            json=payload,
-                            timeout=2,
-                            headers={'Content-Type': 'application/json'}
-                        )
-                        
-                        if api_response.status_code == 200:
-                            api_data = api_response.json()
-                            video_details = api_data.get('videoDetails', {})
-                            
-                            if song_data['duration'] == "Loading...":
-                                length_seconds = video_details.get('lengthSeconds')
-                                if length_seconds:
-                                    song_data['duration'] = self.format_duration(int(length_seconds))
-                                    print(f"[DEBUG] Got duration from API for {video_id}: {song_data['duration']}")
-                            
-                            if song_data['view_count'] == "Loading...":
-                                view_count = video_details.get('viewCount')
-                                if view_count:
-                                    song_data['view_count'] = self.format_views(int(view_count))
-                                    print(f"[DEBUG] Got views from API for {video_id}: {song_data['view_count']}")
-                    
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            info = ydl.extract_info(url, download=False)
+                            if info:
+                                if needs_title:
+                                    song_data['title'] = info.get('title', f'Video {video_id[:8]}')[:100]
+                                if needs_uploader:
+                                    song_data['uploader'] = info.get('uploader', info.get('channel', 'Unknown'))[:50]
+                                if needs_duration:
+                                    duration_seconds = info.get('duration')
+                                    if duration_seconds:
+                                        song_data['duration'] = self.format_duration(duration_seconds)
+                                        print(f"[DEBUG] yt-dlp duration for {video_id}: {song_data['duration']}")
+                                    else:
+                                        song_data['duration'] = "Unknown"
+                                if needs_views:
+                                    view_count = info.get('view_count')
+                                    if view_count:
+                                        song_data['view_count'] = self.format_views(view_count)
+                                        print(f"[DEBUG] yt-dlp views for {video_id}: {song_data['view_count']}")
+                                    else:
+                                        song_data['view_count'] = "Views unavailable"
                     except Exception as e:
-                        print(f"[DEBUG] YouTube API failed for {video_id}: {e}")
+                        print(f"[DEBUG] yt-dlp inline failed for {video_id}: {e}")
                 
-                # Check if we have enough data to mark as not loading
+                # Mark as complete and cache
+                song_data['is_loading'] = False
+                self.song_data_cache[video_id] = song_data
                 has_title = song_data['title'] != "Loading..."
-                has_uploader = song_data['uploader'] != "Loading..."
                 has_duration = song_data['duration'] != "Loading..."
                 has_views = song_data['view_count'] != "Loading..."
-                
-                # Mark as complete if we have title and at least one other piece of data
-                if has_title and (has_uploader or has_duration or has_views):
-                    song_data['is_loading'] = False
-                    self.song_data_cache[video_id] = song_data
-                    print(f"[DEBUG] Fast load complete for {video_id} - Title: {has_title}, Duration: {has_duration}, Views: {has_views}")
+                print(f"[DEBUG] Fast load complete for {video_id} - Title: {has_title}, Duration: {has_duration}, Views: {has_views}")
                 
                 return song_data
                 
@@ -405,9 +404,9 @@ class PlaylistScreen(ctk.CTkFrame):
             future_to_url = {executor.submit(fetch_single_fast, url): url for url in urls}
             
             # Collect results as they complete
-            for future in as_completed(future_to_url, timeout=20):
+            for future in as_completed(future_to_url, timeout=60):
                 try:
-                    result = future.result(timeout=3)
+                    result = future.result(timeout=10)
                     if result:
                         results.append(result)
                 except Exception as e:
@@ -587,9 +586,7 @@ class PlaylistScreen(ctk.CTkFrame):
                 total_time = time.time() - start_time
                 print(f"[DEBUG] Total load time: {total_time:.2f}s (fetch: {fetch_time:.2f}s, display: {display_time:.2f}s)")
                 
-                # Start background enhancement for incomplete songs
-                if instant_song_data:
-                    self.enhance_song_data_background(instant_song_data)
+                # Details are loaded synchronously; no background enhancement
                 
             except Exception as e:
                 print(f"[DEBUG] Error in load_songs_ultra_fast: {e}")
@@ -671,9 +668,7 @@ class PlaylistScreen(ctk.CTkFrame):
                 # Display immediately
                 self.after(0, lambda: self.display_songs(instant_song_data))
                 
-                # Start background enhancement
-                if instant_song_data:
-                    self.enhance_song_data_background(instant_song_data)
+                # Details are loaded synchronously; no background enhancement
                 
             except Exception as e:
                 print(f"[DEBUG] Error in load_custom_songs_ultra_fast: {e}")
