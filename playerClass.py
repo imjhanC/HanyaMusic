@@ -694,7 +694,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 vmedia = self.video_vlc_instance.media_new(video_url)
                 # Add buffering/smoothness options to media
                 try:
-                    vmedia.add_option(":network-caching=300") # 1500
+                    vmedia.add_option(":network-caching=1500") # 1500
                     vmedia.add_option(":clock-jitter=0")
                     vmedia.add_option(":drop-late-frames")
                     vmedia.add_option(":skip-frames")
