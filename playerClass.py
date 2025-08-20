@@ -563,9 +563,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
             pass
 
     def _get_video_url(self):
-        """Resolve the video URL for the current track.
-        Specifically targets 1920x1080 MP4 with AV1 codec.
-        """
+        """Resolve the video URL for the current track with flexible format selection."""
         try:
             video_id = self.song_data.get('videoId')
             if not video_id:
@@ -573,7 +571,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 
             youtube_url = f"https://www.youtube.com/watch?v={video_id}"
             
-            # Set up yt-dlp options
+            # Set up yt-dlp options with more flexible format selection
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': False,
@@ -584,8 +582,8 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 },
-                # Target specific format: 1920x1080 MP4 with AV1 codec
-                'format': 'bestvideo[width=1920][height=1080][vcodec^=av01][ext=mp4]+bestaudio[ext=m4a]/best[width=1920][height=1080][ext=mp4]/best',
+                # More flexible format selection - prioritize quality but be less restrictive
+                'format': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
                 'merge_output_format': 'mp4',
             }
             
@@ -595,45 +593,78 @@ class MusicPlayerContainer(ctk.CTkFrame):
                     if not info:
                         raise Exception("No video info returned")
                         
+                    # If we got merged format info
                     if 'url' in info:
-                        print(f"Selected format: {info.get('format')}")
+                        print(f"Selected format: {info.get('format', 'Unknown')} - {info.get('width', 'Unknown')}x{info.get('height', 'Unknown')}")
                         return info['url']
                     
-                    # If direct URL not found, try to find in formats
+                    # If we need to pick from individual formats
                     formats = info.get('formats', [])
-                    for f in formats:
-                        if (f.get('width') == 1920 and 
-                            f.get('height') == 1080 and 
-                            f.get('vcodec', '').startswith('av01') and 
-                            f.get('ext') == 'mp4' and 
-                            f.get('url')):
-                            print(f"Found matching format: {f.get('format_id')}")
-                            return f['url']
+                    if not formats:
+                        raise Exception("No formats available")
                     
-                    # Fallback to any 1080p format if exact match not found
-                    for f in formats:
-                        if (f.get('width') == 1920 and 
-                            f.get('height') == 1080 and 
-                            f.get('url')):
-                            print(f"Falling back to 1080p format: {f.get('format_id')}")
-                            return f['url']
+                    # Try to find best video format with these priorities:
+                    # 1. 1080p with any codec
+                    # 2. 720p as fallback
+                    # 3. Any video format
                     
-                    raise Exception("No suitable 1080p format found")
+                    video_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('url')]
+                    
+                    if not video_formats:
+                        raise Exception("No video formats found")
+                    
+                    # Sort by height (descending) and prefer certain codecs
+                    def format_score(fmt):
+                        height = fmt.get('height', 0) or 0
+                        width = fmt.get('width', 0) or 0
+                        vcodec = fmt.get('vcodec', '') or ''
+                        
+                        score = height * 1000 + width
+                        
+                        # Prefer certain codecs (small bonus)
+                        if 'avc' in vcodec or 'h264' in vcodec:
+                            score += 50
+                        elif 'vp9' in vcodec:
+                            score += 30
+                        elif 'av01' in vcodec:
+                            score += 20
+                        
+                        return score
+                    
+                    video_formats.sort(key=format_score, reverse=True)
+                    
+                    # Pick the best format
+                    best_format = video_formats[0]
+                    print(f"Selected video format: {best_format.get('format_id', 'Unknown')} - "
+                        f"{best_format.get('width', 'Unknown')}x{best_format.get('height', 'Unknown')} "
+                        f"({best_format.get('vcodec', 'Unknown codec')})")
+                    
+                    return best_format['url']
                     
                 except Exception as e:
-                    print(f"Error in format selection: {e}")
-                    # Fallback to any available format if specific format not found
+                    print(f"Error in primary format selection: {e}")
+                    
+                    # Fallback: try even simpler format selection
                     try:
-                        ydl_opts['format'] = 'bestvideo[height<=?1080]+bestaudio/best'
+                        ydl_opts['format'] = 'best[height<=720]/best'
                         info = ydl.extract_info(youtube_url, download=False)
                         if info and 'url' in info:
-                            print("Falling back to best available format")
+                            print("Using fallback format (720p or best available)")
                             return info['url']
+                        
+                        # Last resort: just get any video format
+                        formats = info.get('formats', []) if info else []
+                        video_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('url')]
+                        if video_formats:
+                            fallback_format = video_formats[0]
+                            print(f"Using last resort format: {fallback_format.get('format_id', 'Unknown')}")
+                            return fallback_format['url']
+                            
                     except Exception as fallback_error:
-                        print(f"Fallback failed: {fallback_error}")
+                        print(f"Fallback format selection failed: {fallback_error}")
                     
                     return None
-                    
+                        
         except Exception as e:
             print(f"Error getting video URL: {e}")
             return None
@@ -663,7 +694,7 @@ class MusicPlayerContainer(ctk.CTkFrame):
                 vmedia = self.video_vlc_instance.media_new(video_url)
                 # Add buffering/smoothness options to media
                 try:
-                    vmedia.add_option(":network-caching=1500")
+                    vmedia.add_option(":network-caching=300") # 1500
                     vmedia.add_option(":clock-jitter=0")
                     vmedia.add_option(":drop-late-frames")
                     vmedia.add_option(":skip-frames")
